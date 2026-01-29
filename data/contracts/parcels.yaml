@@ -1,0 +1,34 @@
+dataset: parcels
+description: >
+  Example parcel/assessor-style dataset used for the demo.
+primary_key: parcel_id
+
+# Column specs drive type checks, null thresholds, uniqueness, and SQL table creation.
+columns:
+  parcel_id:
+    type: string
+    required: true
+    unique: true
+  county:
+    type: string
+    required: true
+  situs_address:
+    type: string
+    required: false
+  assessed_value:
+    type: number
+    required: false
+    min: 0
+  land_use:
+    type: string
+    required: false
+  updated_at:
+    type: datetime
+    required: true
+
+quality:
+  max_null_fraction:
+    assessed_value: 0.30
+
+# warn|fail|allow
+drift_policy: warn

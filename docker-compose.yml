@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: eventpulse
+      POSTGRES_DB: eventpulse
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    env_file: .env
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./data:/data
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    env_file: .env
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./data:/data
+
+  watcher:
+    profiles: ["watch"]
+    build:
+      context: .
+      dockerfile: services/watcher/Dockerfile
+    env_file: .env
+    depends_on:
+      - api
+    volumes:
+      - ./data:/data

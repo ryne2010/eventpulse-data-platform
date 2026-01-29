@@ -1,0 +1,37 @@
+[project]
+name = "eventpulse-data-platform"
+version = "0.2.0"
+description = "Local-first event-driven data platform: ingestion + quality + drift detection + curated outputs."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ryne Schroder" }]
+
+dependencies = [
+  "fastapi==0.115.0",
+  "uvicorn[standard]==0.30.6",
+  "pydantic==2.8.2",
+  "redis==5.0.8",
+  "rq==1.16.2",
+  "psycopg2-binary==2.9.9",
+  "pandas==2.2.2",
+  "openpyxl==3.1.5",
+  "pyyaml==6.0.2",
+  "requests==2.32.3",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.6.0",
+  "mypy>=1.8.0",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
