@@ -1,17 +1,12 @@
-# GCP Infrastructure Skeleton
+# GCP infrastructure
 
-This folder is intentionally minimal.
+This folder contains a **working, team-ready** GCP deployment example.
 
-Recommended approach:
-- Use your existing Terraform baseline (landing zone, IAM, networking, Cloud Run patterns)
-- Add project-specific resources (bucket, Pub/Sub, BigQuery datasets/tables) here
+- `cloud_run_api_demo/` — deploys the EventPulse API + UI to Cloud Run
+- `modules/` — reusable baseline modules (APIs, AR, Cloud Run, IAM, optional VPC connector)
 
-See `docs/gcp_deploy.md` for suggested patterns.
+This repo is designed to be driven from the repo root **Makefile** (no manual `export ...`).
 
-If you want a working example, you can wire this repo into the
-`terraform-gcp-platform-baseline` modules and deploy:
-- Cloud Run API
-- Cloud Run worker (or Cloud Run job)
-- Storage bucket for raw
-- Pub/Sub topic/subscription for ingestion events
-- BigQuery dataset for curated tables
+See:
+- `docs/DEPLOY_GCP.md`
+- `docs/TEAM_WORKFLOW.md`

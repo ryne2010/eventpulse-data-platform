@@ -1,5 +1,23 @@
 # EventPulse Data Platform (Local‑First)
 
+## Quickstart
+
+Local-first dev (recommended):
+
+```bash
+make doctor
+make up
+```
+
+Optional GCP demo deploy:
+
+```bash
+make init GCLOUD_CONFIG=personal-portfolio PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
+make auth          # only needed once per machine/user
+make doctor-gcp
+make deploy-gcp
+```
+
 EventPulse is a **local‑first reference implementation** of an event-driven data platform you can run on your laptop with Docker.
 It demonstrates production-grade patterns you can reuse in cloud environments (GCP, AWS, Azure) while keeping the local developer
 experience simple.
@@ -28,8 +46,7 @@ Optional (for local scripting / linting):
 
 ### 2) Start the stack
 ```bash
-cp .env.example .env
-docker compose up --build
+make up
 ```
 
 Services started:
@@ -74,7 +91,7 @@ curl -s "http://localhost:8081/api/datasets/parcels/curated/sample?limit=10" | j
 ### Optional: auto-ingest by watching `./data/incoming`
 Start the watcher container (polls and ingests new files automatically):
 ```bash
-docker compose --profile watch up --build
+docker compose --profile watch up --build  # (or wire a Make target)
 ```
 
 Drop new files into `./data/incoming/` and they will be ingested automatically.
@@ -149,19 +166,25 @@ See `.env.example` for details.
 
 ---
 
-## Optional: GCP deployment path
+## Optional: GCP deployment (Cloud Run demo)
 
-This repo includes design notes and a Terraform skeleton under `infra/gcp/`.
-The recommended cloud mapping is:
+This repo includes a **working, team-ready** Cloud Run demo deployment (Terraform + Cloud Build) under:
+- `infra/gcp/cloud_run_api_demo/`
 
-- Raw landing: **Cloud Storage**
-- Eventing: **Pub/Sub**
-- Processing: **Cloud Run** (API + worker)
-- Warehouse: **BigQuery**
-- Secrets/IAM: **Secret Manager / IAM**
-- Observability: **Cloud Logging/Monitoring**
+Quickstart:
 
-See: `docs/gcp_deploy.md`
+```bash
+# one-command deploy (remote state + Cloud Build)
+make deploy-gcp
+
+# add DATABASE_URL (reads from stdin)
+make db-secret
+```
+
+See:
+- `docs/DEPLOY_GCP.md`
+- `docs/TEAM_WORKFLOW.md`
+
 
 ---
 
