@@ -99,7 +99,7 @@ resource "google_monitoring_dashboard" "cloudrun" {
         {
           title = "Recent errors"
           logsPanel = {
-            filter = "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"${var.service_name}\" severity>=ERROR"
+            filter        = "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"${var.service_name}\" severity>=ERROR"
             resourceNames = ["projects/${var.project_id}"]
           }
         },
@@ -124,8 +124,8 @@ resource "google_monitoring_alert_policy" "cloudrun_5xx" {
       threshold_value = 0
 
       aggregations {
-        alignment_period    = "60s"
-        per_series_aligner  = "ALIGN_DELTA"
+        alignment_period     = "60s"
+        per_series_aligner   = "ALIGN_DELTA"
         cross_series_reducer = "REDUCE_SUM"
         group_by_fields      = []
       }
@@ -155,8 +155,8 @@ resource "google_monitoring_alert_policy" "cloudrun_latency" {
       threshold_value = 1000
 
       aggregations {
-        alignment_period    = "60s"
-        per_series_aligner  = "ALIGN_PERCENTILE_95"
+        alignment_period     = "60s"
+        per_series_aligner   = "ALIGN_PERCENTILE_95"
         cross_series_reducer = "REDUCE_MEAN"
         group_by_fields      = []
       }

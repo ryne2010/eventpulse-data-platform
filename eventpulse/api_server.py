@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -17,7 +18,8 @@ from .config import settings
 from .db import get_ingestion, get_quality_report, init_db, list_ingestions
 from .ingest import create_ingestion_record
 from .jobs import process_ingestion
-from .loaders.postgres import sample_curated
+from .loaders.postgres import curated_table_exists, sample_curated, sample_curated_for_ingestion
+from .demo.real_estate import generate_recorder_sales
 
 
 app = FastAPI(title="EventPulse Data Platform", version="0.2.0")
@@ -139,6 +141,31 @@ def api_get_ingestion(ingestion_id: str) -> Dict[str, Any]:
     return {"ingestion": ingestion, "quality_report": quality}
 
 
+@app.get("/api/ingestions/{ingestion_id}/preview")
+def ingestion_preview(ingestion_id: str, limit: int = 10) -> Dict[str, Any]:
+    """Preview the curated rows produced by a specific ingestion (if any)."""
+    limit = max(1, min(limit, 50))
+    ingestion = get_ingestion(ingestion_id)
+    if not ingestion:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    dataset = ingestion["dataset"]
+    try:
+        if not curated_table_exists(dataset):
+            return {"ingestion_id": ingestion_id, "dataset": dataset, "table_exists": False, "rows": [], "limit": limit}
+        rows = sample_curated_for_ingestion(dataset, ingestion_id=ingestion_id, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch ingestion preview: {e}")
+
+    for r in rows:
+        for k, v in list(r.items()):
+            if hasattr(v, "isoformat"):
+                r[k] = v.isoformat()
+    return {"ingestion_id": ingestion_id, "dataset": dataset, "table_exists": True, "rows": rows, "limit": limit}
+
+
 @app.post("/api/ingestions/{ingestion_id}/replay")
 def replay(ingestion_id: str) -> Dict[str, Any]:
     ingestion = get_ingestion(ingestion_id)
@@ -152,15 +179,131 @@ def replay(ingestion_id: str) -> Dict[str, Any]:
 def curated_sample(dataset: str, limit: int = 20) -> Dict[str, Any]:
     limit = max(1, min(limit, 200))
     try:
+        if not curated_table_exists(dataset):
+            return {"rows": [], "limit": limit, "table_exists": False}
         rows = sample_curated(dataset, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Curated table not found or error: {e}")
+        # Preserve unexpected errors as 500s (helps debugging).
+        raise HTTPException(status_code=500, detail=f"Failed to fetch curated sample: {e}")
     # Convert UUID/datetime for JSON
     for r in rows:
         for k, v in list(r.items()):
             if hasattr(v, "isoformat"):
                 r[k] = v.isoformat()
-    return {"rows": rows, "limit": limit}
+    return {"rows": rows, "limit": limit, "table_exists": True}
+
+
+def _csv_escape(v: Any) -> str:
+    if v is None:
+        return ""
+    s = str(v)
+    if any(ch in s for ch in [",", "\n", "\r", '"']):
+        s = '"' + s.replace('"', '""') + '"'
+    return s
+
+
+@app.get("/api/demo/real_estate/recorder_sales")
+def demo_recorder_sales(limit: int = 200) -> Dict[str, Any]:
+    limit = max(10, min(limit, 2000))
+    return generate_recorder_sales(limit=limit)
+
+
+@app.post("/api/demo/seed/parcels")
+def seed_parcels(limit: int = 50, per_ingestion_max: int = 15) -> Dict[str, Any]:
+    """Seed 50 synthetic recorder-sales rows into the parcels pipeline.
+
+    Writes a CSV into INCOMING_DIR, then enqueues a normal ingestion job so the
+    data flows through raw/quality/drift/curated like any other dataset.
+    """
+    limit = max(1, min(limit, 50))
+    per_ingestion_max = max(1, min(per_ingestion_max, 15))
+
+    seed_id = uuid.uuid4().hex[:8]
+    demo = generate_recorder_sales(limit=limit, parcel_id_prefix=f"BACA{seed_id}")
+
+    ingestions = []
+
+    cols = [
+        "parcel_id",
+        "county",
+        "situs_address",
+        "city",
+        "state",
+        "zip",
+        "lat",
+        "lon",
+        "sale_date",
+        "recording_date",
+        "sale_price",
+        "deed_type",
+        "doc_number",
+        "book",
+        "page",
+        "grantor",
+        "grantee",
+        "year_built",
+        "bedrooms",
+        "bathrooms",
+        "building_sqft",
+        "lot_sqft",
+        "assessed_value",
+        "land_use",
+        "updated_at",
+    ]
+
+    rows = demo["rows"]
+    for part_idx in range(0, len(rows), per_ingestion_max):
+        chunk = rows[part_idx : part_idx + per_ingestion_max]
+        filename = f"parcels_recorder_seed_{seed_id}_{(part_idx // per_ingestion_max) + 1}.csv"
+        tmp_path = os.path.join(settings.incoming_dir, filename)
+
+        # Use CSV (supported without extra deps).
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(",".join(cols) + "\n")
+            for r in chunk:
+                row = {
+                    "parcel_id": r["parcel_id"],
+                    "county": "Baca",
+                    "situs_address": r["situs_address"],
+                    "city": r["city"],
+                    "state": r["state"],
+                    "zip": r["zip"],
+                    "lat": r["lat"],
+                    "lon": r["lon"],
+                    "sale_date": r["sale_date"] + "T00:00:00Z",
+                    "recording_date": r["recording_date"] + "T00:00:00Z",
+                    "sale_price": r["sale_price"],
+                    "deed_type": r["deed_type"],
+                    "doc_number": r["doc_number"],
+                    "book": r["book"],
+                    "page": r["page"],
+                    "grantor": r["grantor"],
+                    "grantee": r["grantee"],
+                    "year_built": r["year_built"],
+                    "bedrooms": r["bedrooms"],
+                    "bathrooms": r["bathrooms"],
+                    "building_sqft": r["building_sqft"],
+                    "lot_sqft": r["lot_sqft"],
+                    "assessed_value": r["sale_price"],
+                    "land_use": "residential",
+                    "updated_at": r["recording_date"] + "T00:00:00Z",
+                }
+                f.write(",".join(_csv_escape(row[c]) for c in cols) + "\n")
+
+        ingestion_id = create_ingestion_record("parcels", source=f"seed:{seed_id}", src_path=tmp_path)
+
+        dst = os.path.join(settings.archive_dir, os.path.basename(tmp_path))
+        try:
+            shutil.move(tmp_path, dst)
+        except Exception:
+            pass
+
+        job = queue.enqueue(process_ingestion, ingestion_id)
+        ingestions.append({"ingestion_id": ingestion_id, "job_id": job.id, "rows": len(chunk)})
+
+    return {"ok": True, "seed_id": seed_id, "rows": limit, "per_ingestion_max": per_ingestion_max, "ingestions": ingestions}
 
 
 # SPA fallback (serves React Router paths)

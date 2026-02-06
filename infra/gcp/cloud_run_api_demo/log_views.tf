@@ -16,7 +16,7 @@
 */
 
 locals {
-  logs_location  = "global"
+  logs_location = "global"
 
   # NOTE: service_name should include env already (e.g., gkp-dev), so we do NOT suffix env again.
   logs_bucket_id = "${var.service_name}-logs"
@@ -59,7 +59,7 @@ resource "google_logging_project_sink" "service_to_bucket" {
   # logging.googleapis.com/projects/<PROJECT_ID>/locations/<LOCATION>/buckets/<BUCKET_ID>
   destination = "logging.googleapis.com/${google_logging_project_bucket_config.service_logs[0].id}"
 
-  filter                = local.service_logs_router_filter
+  filter                 = local.service_logs_router_filter
   unique_writer_identity = true
 }
 

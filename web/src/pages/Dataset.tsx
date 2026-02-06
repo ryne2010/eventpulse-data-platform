@@ -18,6 +18,7 @@ export function DatasetPage() {
   })
 
   const rows = q.data?.rows ?? []
+  const tableExists = q.data?.table_exists
 
   const columns = React.useMemo<ColumnDef<Record<string, any>>[]>(() => {
     const keys = rows.length ? Object.keys(rows[0]) : []
@@ -55,6 +56,15 @@ export function DatasetPage() {
           <RangeSlider min={10} max={200} step={5} value={limit} onChange={setLimit} label="Row limit" />
           {q.isLoading ? <div className="text-sm text-muted-foreground">Loading…</div> : null}
           {q.isError ? <div className="text-sm text-destructive">Error: {(q.error as Error).message}</div> : null}
+          {q.isSuccess && tableExists === false ? (
+            <div className="text-sm text-muted-foreground">
+              No curated table yet for <span className="font-mono">{dataset}</span>. Ingest a file to create it (see README
+              “Generate sample files and ingest”).
+            </div>
+          ) : null}
+          {q.isSuccess && tableExists === true && rows.length === 0 ? (
+            <div className="text-sm text-muted-foreground">Curated table exists, but has no rows yet.</div>
+          ) : null}
           <DataTable data={rows} columns={columns} />
         </CardContent>
       </Card>

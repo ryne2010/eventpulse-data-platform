@@ -58,6 +58,26 @@ Services started:
 - Worker: background job processor
 - (Optional) Watcher: directory polling → auto-ingest (see below)
 
+Home page demo:
+- The home page map + charts are powered by **curated parcels** (synthetic recorder-style sales) limited to 50 rows.
+- If the table is empty, click **Seed 50 parcels** on `/` (or call `POST /api/demo/seed/parcels?limit=50`).
+  - Seeding is split into multiple ingestions of **≤15 parcels each** so pipeline activity previews have rows per ingestion.
+
+### Troubleshooting
+
+If the API fails to start with:
+
+```
+psycopg2.OperationalError: could not translate host name "postgres" to address
+```
+
+it usually means the `postgres` container ended up in a stale/broken networking state. Fix by recreating the dependency containers:
+
+```bash
+docker compose up -d --force-recreate postgres redis
+docker compose up --build
+```
+
 ### 3) Generate sample files and ingest
 Generate a baseline Excel file and a drifted Excel file into `./data/incoming/`:
 ```bash
@@ -197,4 +217,3 @@ Apache-2.0
 - Vite + React
 - TanStack Router/Query/Table + Virtual + Pacer + Ranger
 - Tailwind + shadcn-style components (vendored in `web/src/portfolio-ui`)
-

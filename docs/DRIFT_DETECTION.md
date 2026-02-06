@@ -4,36 +4,13 @@ This repo includes a scheduled GitHub Actions workflow:
 
 - `.github/workflows/terraform-drift.yml`
 
-It runs a `terraform plan -detailed-exitcode` on a schedule to detect **drift**
-(resources changed outside of Terraform).
-
-## Why it matters
-
-In real teams, drift happens:
-- an emergency hotfix
-- a console change
-- a manual permission tweak
-
-Drift detection gives you:
-- early visibility
-- a clean audit trail (workflow logs)
-- confidence that Terraform is still the source of truth
+It runs `terraform plan -detailed-exitcode` to detect drift (resources changed outside of Terraform).
 
 ## How to enable
 
-1) Configure Workload Identity Federation (WIF) for GitHub Actions (see `docs/WIF_GITHUB_ACTIONS.md`)
-2) Set GitHub Actions repo variables:
-   - `PROJECT_ID`
-   - `REGION`
-   - `TFSTATE_BUCKET`
-   - `TFSTATE_PREFIX`
-
-Then the scheduled workflow will run automatically.
-
-## What to do when drift is detected
-
-- Review the plan output in the workflow logs.
-- Decide whether:
-  - the manual change should be reverted (preferred), or
-  - Terraform should be updated to match the new desired state.
-- Create a PR with the Terraform fix and re-apply via the apply workflow.
+1) Bootstrap WIF + CI service account (see `docs/WIF_GITHUB_ACTIONS.md`).
+2) Create and upload config to GCS (see `docs/WIF_GITHUB_ACTIONS.md`).
+3) Set GitHub Environment variables (per env):
+   - `GCP_WIF_PROVIDER`
+   - `GCP_WIF_SERVICE_ACCOUNT`
+   - `GCP_TF_CONFIG_GCS_PATH`

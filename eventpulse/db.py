@@ -1,5 +1,7 @@
 import contextlib
 import json
+import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Sequence, Tuple
@@ -8,6 +10,8 @@ import psycopg2
 import psycopg2.extras
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def now_utc() -> datetime:
@@ -25,42 +29,59 @@ def get_conn():
 
 def init_db() -> None:
     """Create core tables if they don't exist."""
-    with get_conn() as conn:
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS ingestions (
-                    id UUID PRIMARY KEY,
-                    dataset TEXT NOT NULL,
-                    source TEXT,
-                    filename TEXT,
-                    file_ext TEXT,
-                    sha256 TEXT NOT NULL,
-                    raw_path TEXT NOT NULL,
-                    received_at TIMESTAMPTZ NOT NULL,
-                    status TEXT NOT NULL,
-                    error TEXT,
-                    processed_at TIMESTAMPTZ
-                );
+    # In local dev (Docker Compose), Postgres and/or DNS can be briefly unavailable
+    # while the stack is coming up. Retry to avoid flaky startup failures.
+    max_wait_seconds = 30.0
+    deadline = time.monotonic() + max_wait_seconds
+    attempt = 0
 
-                CREATE TABLE IF NOT EXISTS dataset_schemas (
-                    dataset TEXT NOT NULL,
-                    schema_hash TEXT NOT NULL,
-                    schema_json JSONB NOT NULL,
-                    first_seen_at TIMESTAMPTZ NOT NULL,
-                    last_seen_at TIMESTAMPTZ NOT NULL,
-                    PRIMARY KEY (dataset, schema_hash)
-                );
+    while True:
+        attempt += 1
+        try:
+            with get_conn() as conn:
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS ingestions (
+                            id UUID PRIMARY KEY,
+                            dataset TEXT NOT NULL,
+                            source TEXT,
+                            filename TEXT,
+                            file_ext TEXT,
+                            sha256 TEXT NOT NULL,
+                            raw_path TEXT NOT NULL,
+                            received_at TIMESTAMPTZ NOT NULL,
+                            status TEXT NOT NULL,
+                            error TEXT,
+                            processed_at TIMESTAMPTZ
+                        );
 
-                CREATE TABLE IF NOT EXISTS quality_reports (
-                    ingestion_id UUID PRIMARY KEY REFERENCES ingestions(id) ON DELETE CASCADE,
-                    passed BOOLEAN NOT NULL,
-                    report JSONB NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL
-                );
-                """
-            )
+                        CREATE TABLE IF NOT EXISTS dataset_schemas (
+                            dataset TEXT NOT NULL,
+                            schema_hash TEXT NOT NULL,
+                            schema_json JSONB NOT NULL,
+                            first_seen_at TIMESTAMPTZ NOT NULL,
+                            last_seen_at TIMESTAMPTZ NOT NULL,
+                            PRIMARY KEY (dataset, schema_hash)
+                        );
+
+                        CREATE TABLE IF NOT EXISTS quality_reports (
+                            ingestion_id UUID PRIMARY KEY REFERENCES ingestions(id) ON DELETE CASCADE,
+                            passed BOOLEAN NOT NULL,
+                            report JSONB NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL
+                        );
+                        """
+                    )
+            return
+        except psycopg2.OperationalError as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            sleep_seconds = min(0.25 * (2 ** (attempt - 1)), 3.0, remaining)
+            logger.warning("Database not ready yet (attempt %s): %s", attempt, exc)
+            time.sleep(sleep_seconds)
 
 
 def insert_ingestion(

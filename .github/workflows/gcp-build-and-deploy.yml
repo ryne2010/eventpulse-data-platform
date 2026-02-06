@@ -1,0 +1,152 @@
+name: gcp-build-and-deploy
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Environment (dev|stage|prod)
+        required: true
+        default: dev
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Install deps
+        run: uv sync --dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Typecheck (mypy)
+        run: uv run mypy eventpulse
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Frontend build
+        working-directory: web
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm build
+
+  tf_hygiene:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TF_DIR: infra/gcp/cloud_run_api_demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Terraform fmt (check)
+        run: terraform -chdir=${TF_DIR} fmt -check -recursive
+
+      - name: Terraform init (no backend)
+        run: terraform -chdir=${TF_DIR} init -backend=false
+
+      - name: Terraform validate
+        run: terraform -chdir=${TF_DIR} validate
+
+      - name: Conftest policy gate (OPA)
+        run: |
+          set -euo pipefail
+          docker run --rm -v "${{ github.workspace }}:/project" -w /project openpolicyagent/conftest:latest test             --parser hcl2             --policy infra/gcp/policy             $(find infra/gcp -path "*/.terraform" -prune -o -type f -name "*.tf" -print)
+
+  deploy:
+    needs: [quality, tf_hygiene]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.env || 'dev' }}
+    concurrency:
+      group: gcp-build-and-deploy-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.env || 'dev' }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      id-token: write
+
+    # Auto-skip until GitHub Environment variables are set.
+    if: ${{ vars.GCP_WIF_PROVIDER != '' && vars.GCP_WIF_SERVICE_ACCOUNT != '' && vars.GCP_TF_CONFIG_GCS_PATH != '' }}
+
+    env:
+      TF_DIR: infra/gcp/cloud_run_api_demo
+      TF_CONFIG_GCS_PATH: ${{ vars.GCP_TF_CONFIG_GCS_PATH }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_WIF_SERVICE_ACCOUNT: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Fetch Terraform config from GCS
+        run: |
+          set -euo pipefail
+          gcloud storage cp "${TF_CONFIG_GCS_PATH}/backend.hcl" "${TF_DIR}/backend.hcl"
+          gcloud storage cp "${TF_CONFIG_GCS_PATH}/terraform.tfvars" "${TF_DIR}/terraform.tfvars"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Terraform init (remote state)
+        run: terraform -chdir=${TF_DIR} init -reconfigure -backend-config=backend.hcl
+
+      - name: Apply prerequisites (APIs + AR + SAs + secrets)
+        run: |
+          set -euo pipefail
+          terraform -chdir=${TF_DIR} apply -auto-approve             -target=module.core_services             -target=module.artifact_registry             -target=module.service_accounts             -target=module.secrets             -target=google_project_iam_member.cloudbuild_artifact_registry_writer
+
+      - name: Build + push image (Cloud Build)
+        id: build
+        run: |
+          set -euo pipefail
+          TAG="sha-${GITHUB_SHA::7}-${GITHUB_RUN_ID}"
+          IMAGE="$(python3 .github/scripts/tfvars_compute_image.py --tfvars ${TF_DIR}/terraform.tfvars --tag "${TAG}")"
+          echo "Building: ${IMAGE}"
+          gcloud builds submit --tag "${IMAGE}" .
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Update terraform.tfvars in GCS (set image)
+        run: |
+          set -euo pipefail
+          IMAGE="${{ steps.build.outputs.image }}"
+          python3 .github/scripts/tfvars_set_image.py --tfvars ${TF_DIR}/terraform.tfvars --image "${IMAGE}"
+          gcloud storage cp "${TF_DIR}/terraform.tfvars" "${TF_CONFIG_GCS_PATH}/terraform.tfvars"
+
+      - name: Terraform apply (deploy)
+        run: terraform -chdir=${TF_DIR} apply -auto-approve
+
+      - name: Verify /health
+        run: |
+          set -euo pipefail
+          URL=$(terraform -chdir=${TF_DIR} output -raw service_url)
+          curl -fsS "${URL}/health" >/dev/null
+          echo "OK: ${URL}/health"

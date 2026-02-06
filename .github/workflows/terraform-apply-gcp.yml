@@ -4,64 +4,73 @@ on:
   workflow_dispatch:
     inputs:
       env:
-        description: "Environment workspace (dev|stage|prod)"
+        description: Environment (dev|stage|prod)
         required: true
-        default: "dev"
+        default: dev
+      tf_dir:
+        description: Terraform root dir (relative path)
+        required: true
+        default: infra/gcp/cloud_run_api_demo
+      tf_config_gcs_path:
+        description: Optional override for GCS config prefix (defaults to env var GCP_TF_CONFIG_GCS_PATH)
+        required: false
+        default: ""
 
 jobs:
   apply:
-    # Skip entirely until you configure WIF secrets.
-    if: ${{ vars.GCP_WIF_PROVIDER != '' && vars.GCP_WIF_SERVICE_ACCOUNT != '' }}
     runs-on: ubuntu-latest
-
-    # GitHub Environments can enforce manual approvals per env (recommended).
     environment: ${{ inputs.env }}
-
+    concurrency:
+      group: terraform-apply-gcp-${{ inputs.env }}
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
 
     env:
-      TF_DIR: infra/gcp/cloud_run_api_demo
-
-      # GitHub "Variables" (Repo Settings → Secrets and variables → Actions → Variables)
-      PROJECT_ID: ${{ vars.PROJECT_ID }}
-      REGION: ${{ vars.REGION }}
-      TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
-      TFSTATE_PREFIX: ${{ vars.TFSTATE_PREFIX }}
-      WORKSPACE_DOMAIN: ${{ vars.WORKSPACE_DOMAIN }}
-
-      # Terraform variables (TF_VAR_*)
-      TF_VAR_project_id: ${{ vars.PROJECT_ID }}
-      TF_VAR_region: ${{ vars.REGION }}
-      TF_VAR_env: ${{ inputs.env }}
-      TF_VAR_service_name: "eventpulse-${{ inputs.env }}"
+      TF_DIR: ${{ inputs.tf_dir }}
+      TF_CONFIG_GCS_PATH: ${{ inputs.tf_config_gcs_path || vars.GCP_TF_CONFIG_GCS_PATH }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_WIF_SERVICE_ACCOUNT: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Assert required GitHub Environment variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GCP_WIF_PROVIDER}" || { echo "::error::Missing env var: GCP_WIF_PROVIDER"; exit 1; }
+          test -n "${GCP_WIF_SERVICE_ACCOUNT}" || { echo "::error::Missing env var: GCP_WIF_SERVICE_ACCOUNT"; exit 1; }
+          test -n "${TF_CONFIG_GCS_PATH}" || { echo "::error::Missing env var: GCP_TF_CONFIG_GCS_PATH"; exit 1; }
+          test -n "${TF_DIR}" || { echo "::error::Missing input: tf_dir"; exit 1; }
 
-      - name: Auth to Google Cloud (Workload Identity Federation)
+      - uses: actions/checkout@v4
+
+      - name: Auth to Google Cloud (WIF)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_WIF_SERVICE_ACCOUNT }}
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ vars.PROJECT_ID }}
+
+      - name: Fetch Terraform config from GCS
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud storage cp "${TF_CONFIG_GCS_PATH}/backend.hcl" "${TF_DIR}/backend.hcl"
+          gcloud storage cp "${TF_CONFIG_GCS_PATH}/terraform.tfvars" "${TF_DIR}/terraform.tfvars"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.6.6"
+          terraform_version: 1.8.5
 
       - name: Terraform init (remote state)
-        run: |
-          terraform -chdir=${TF_DIR} init -reconfigure \
-            -backend-config="bucket=${TFSTATE_BUCKET}" \
-            -backend-config="prefix=${TFSTATE_PREFIX}/${{ inputs.env }}"
+        run: terraform -chdir="${TF_DIR}" init -reconfigure -backend-config="backend.hcl"
+
+      - name: Terraform plan (apply exactly what you reviewed)
+        run: terraform -chdir="${TF_DIR}" plan -out=tfplan
 
       - name: Terraform apply
-        run: terraform -chdir=${TF_DIR} apply -auto-approve
+        run: terraform -chdir="${TF_DIR}" apply -auto-approve tfplan

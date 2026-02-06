@@ -1,11 +1,15 @@
-version: "3.9"
-
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_PASSWORD: eventpulse
       POSTGRES_DB: eventpulse
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eventpulse"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
     ports:
       - "5432:5432"
     volumes:
@@ -13,6 +17,11 @@ services:
 
   redis:
     image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
     ports:
       - "6379:6379"
 
@@ -22,8 +31,10 @@ services:
       dockerfile: services/api/Dockerfile
     env_file: .env
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8081:8080"
     volumes:
@@ -35,8 +46,10 @@ services:
       dockerfile: services/worker/Dockerfile
     env_file: .env
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./data:/data
 
@@ -47,6 +60,7 @@ services:
       dockerfile: services/watcher/Dockerfile
     env_file: .env
     depends_on:
-      - api
+      api:
+        condition: service_started
     volumes:
       - ./data:/data

@@ -290,6 +290,9 @@ doctor-gcp:
 	echo "Doctor OK."
 up: doctor
 	cp -n .env.example .env || true
+	# Work around occasional Docker/Compose stale container networking issues by
+	# force-recreating core dependencies first (preserves bind-mounted data).
+	$(COMPOSE) up -d --force-recreate postgres redis
 	$(COMPOSE) up --build
 
 down:
@@ -487,4 +490,3 @@ tf-policy: ## OPA/Conftest policy gate for Terraform (falls back to docker)
 	fi
 
 tf-check: tf-fmt tf-validate tf-lint tf-sec tf-policy ## Run all Terraform hygiene checks
-

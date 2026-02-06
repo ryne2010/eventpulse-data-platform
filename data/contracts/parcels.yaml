@@ -1,6 +1,6 @@
 dataset: parcels
 description: >
-  Example parcel/assessor-style dataset used for the demo.
+  Synthetic county-recorder-style property sales near Springfield, CO (demo).
 primary_key: parcel_id
 
 # Column specs drive type checks, null thresholds, uniqueness, and SQL table creation.
@@ -15,6 +15,66 @@ columns:
   situs_address:
     type: string
     required: false
+  city:
+    type: string
+    required: true
+  state:
+    type: string
+    required: true
+  zip:
+    type: string
+    required: true
+  lat:
+    type: number
+    required: true
+  lon:
+    type: number
+    required: true
+  sale_date:
+    type: datetime
+    required: true
+  recording_date:
+    type: datetime
+    required: true
+  sale_price:
+    type: number
+    required: true
+    min: 0
+  deed_type:
+    type: string
+    required: false
+  doc_number:
+    type: string
+    required: false
+  book:
+    type: string
+    required: false
+  page:
+    type: string
+    required: false
+  grantor:
+    type: string
+    required: false
+  grantee:
+    type: string
+    required: false
+  year_built:
+    type: integer
+    required: false
+  bedrooms:
+    type: integer
+    required: false
+  bathrooms:
+    type: number
+    required: false
+  building_sqft:
+    type: integer
+    required: false
+  lot_sqft:
+    type: integer
+    required: false
+
+  # Optional compatibility field (can be mapped to sale_price by downstream)
   assessed_value:
     type: number
     required: false
@@ -28,7 +88,10 @@ columns:
 
 quality:
   max_null_fraction:
-    assessed_value: 0.30
+    deed_type: 1.00
+    doc_number: 1.00
+    grantor: 1.00
+    grantee: 1.00
 
 # warn|fail|allow
 drift_policy: warn
