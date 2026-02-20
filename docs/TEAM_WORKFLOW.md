@@ -54,7 +54,10 @@ For automated deploys:
 - use Workload Identity Federation (no JSON keys)
 - require plan output review for IaC changes
 
-See repo 3 for a full example.
+See:
+- `.github/workflows/ci.yml` (lint/typecheck/test + Terraform hygiene)
+- `docs/WIF_GITHUB_ACTIONS.md` (keyless GCP auth for deploy workflows)
+
 
 ## Dependency lockfiles
 

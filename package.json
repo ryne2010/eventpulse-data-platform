@@ -1,0 +1,14 @@
+{
+  "name": "eventpulse-data-platform",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "workspaces": [
+    "web"
+  ],
+  "scripts": {
+    "web:dev": "pnpm -C web dev",
+    "web:build": "pnpm -C web build",
+    "web:lint": "pnpm -C web lint",
+    "web:typecheck": "pnpm -C web typecheck"
+  }
+}

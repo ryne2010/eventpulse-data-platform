@@ -93,7 +93,19 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   display: 'grid',
                   gridTemplateColumns,
                 }}
-                onClick={() => props.onRowClick?.(row.original)}
+                onClick={(e) => {
+                  if (!props.onRowClick) return
+                  const target = e.target as HTMLElement | null
+                  // Avoid row navigation when the user clicks interactive controls.
+                  if (
+                    target?.closest(
+                      'button, a, input, textarea, select, option, [role="button"], [data-no-row-click]',
+                    )
+                  ) {
+                    return
+                  }
+                  props.onRowClick(row.original)
+                }}
               >
                 {row.getVisibleCells().map((cell) => (
                   <div

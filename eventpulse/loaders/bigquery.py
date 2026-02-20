@@ -9,16 +9,12 @@ If you want to load curated data to BigQuery, implement:
 We intentionally keep this file as a stub to avoid forcing BigQuery dependencies
 for local development.
 
-See docs/gcp_deploy.md for recommended cloud mapping.
+See docs/DEPLOY_GCP.md for recommended cloud mapping.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-import pandas as pd
-
-from ..contracts import DatasetContract
 
 
 class BigQueryLoaderNotConfigured(RuntimeError):
@@ -27,6 +23,5 @@ class BigQueryLoaderNotConfigured(RuntimeError):
 
 def upsert_curated_bigquery(*args: Any, **kwargs: Any) -> int:
     raise BigQueryLoaderNotConfigured(
-        "BigQuery loader is not configured in this local-first repo. "
-        "See docs/gcp_deploy.md to wire BigQuery loading."
+        "BigQuery loader is not configured in this local-first repo. See docs/DEPLOY_GCP.md to wire BigQuery loading."
     )

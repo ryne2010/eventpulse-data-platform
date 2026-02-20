@@ -7,6 +7,20 @@ Files to review:
 - `infra/gcp/cloud_run_api_demo/log_views.tf` — service-scoped log bucket + sink + log view
 - `infra/gcp/cloud_run_api_demo/slo.tf` — Service Monitoring + Availability SLO + burn-rate alerts
 
+
+## Application logs (request IDs + trace correlation)
+
+The API emits structured JSON logs (Cloud Logging friendly) and automatically attaches:
+
+- `request_id` — from `X-Request-ID` (if provided) or generated per request
+- `logging.googleapis.com/trace` — derived from `X-Cloud-Trace-Context` on Cloud Run
+
+This makes it easy to correlate:
+- a user action in the UI → API logs
+- a Cloud Run request → Cloud Trace span → application logs
+
+Tip: when reporting a bug, paste the `X-Request-ID` from the response headers.
+
 ---
 
 ## Logging: service-scoped logs (client-safe pattern)
@@ -71,3 +85,23 @@ Try these controlled failures and document your findings:
    - SLO burn-rate trends change
 
 Capture your results in `RUNBOOK.md` — that’s interview gold.
+
+---
+
+## In-app audit + quality trends (UI-facing observability)
+
+In addition to Cloud Logging/Monitoring, the app persists lightweight, queryable telemetry:
+
+- **Audit events**: `/api/audit_events`
+  - ingestion lifecycle (received, processing_started, loaded, failed_quality, etc.)
+  - ops actions (reclaim stuck, replay)
+  - contract edits (when enabled)
+
+- **Quality trend series**: `/api/trends/quality`
+  - aggregated pass/fail counts over time buckets
+
+These power the UI pages **Audit** and **Trends** and are useful for:
+- debugging regressions without digging through logs
+- building simple “data reliability” dashboards
+
+

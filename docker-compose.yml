@@ -28,7 +28,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: services/api/Dockerfile
+      dockerfile: Dockerfile
     env_file: .env
     depends_on:
       postgres:
@@ -64,3 +64,24 @@ services:
         condition: service_started
     volumes:
       - ./data:/data
+
+  edge-agent:
+    profiles: ["edge"]
+    build:
+      context: .
+      dockerfile: services/edge_agent/Dockerfile
+    env_file: .env
+    environment:
+      EDGE_API_BASE_URL: http://api:8080
+      EDGE_UPLOAD_MODE: auto
+      EDGE_DATASET: edge_telemetry
+      EDGE_DEVICE_ID: rpi-demo-01
+      EDGE_SENSOR_MODE: simulated
+    depends_on:
+      api:
+        condition: service_started
+    volumes:
+      - edge_spool:/data
+
+volumes:
+  edge_spool:

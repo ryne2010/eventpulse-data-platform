@@ -1,0 +1,27 @@
+[Unit]
+Description=EventPulse Edge Agent (Docker)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/eventpulse-edge/edge.env
+ExecStart=/usr/local/bin/eventpulse-edge-agent-run
+ExecStop=-/usr/bin/docker stop -t 10 eventpulse-edge-agent
+ExecStopPost=-/usr/bin/docker rm -f eventpulse-edge-agent
+Restart=always
+RestartSec=5
+TimeoutStartSec=0
+
+# Basic hardening (systemd-level)
+NoNewPrivileges=yes
+PrivateTmp=yes
+# Avoid overly strict filesystem sandboxing because this service needs to talk
+# to the Docker daemon via /var/run/docker.sock.
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/eventpulse-edge
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+# VCS
+.git
+.gitignore
+
+# Python
+.venv
+__pycache__
+*.pyc
+.mypy_cache
+.pytest_cache
+.ruff_cache
+
+# Local env
+.env
+
+# Data directories (runtime)
+data/pg
+data/raw
+data/archive
+data/incoming
+
+# Frontend build artifacts
+node_modules
+web/node_modules
+web/dist
+
+# Terraform
+**/.terraform
+**/.terraform.lock.hcl
+
+# Misc
+.DS_Store

@@ -16,6 +16,10 @@ def main() -> None:
 
     api_url = os.getenv("EVENTPULSE_API_URL", "http://api:8080")
 
+    headers = {}
+    if settings.task_token:
+        headers["X-Task-Token"] = settings.task_token
+
     print(f"[watcher] Watching {incoming} (poll={settings.watch_poll_seconds}s) → {api_url}/api/ingest/from_path")
 
     while True:
@@ -45,6 +49,7 @@ def main() -> None:
                 r = requests.post(
                     f"{api_url}/api/ingest/from_path",
                     json={"dataset": dataset, "relative_path": name, "source": "watcher"},
+                    headers=headers,
                     timeout=10,
                 )
                 if r.status_code == 200:

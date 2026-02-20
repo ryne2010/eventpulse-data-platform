@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# EventPulse Edge Agent runner for Raspberry Pi (systemd)
+#
+# - Reads configuration from /etc/eventpulse-edge/edge.env (loaded by systemd)
+# - Runs a single container named: eventpulse-edge-agent
+# - Persists spool + device token under: /var/lib/eventpulse-edge/spool
+
+: "${EDGE_API_BASE_URL:?EDGE_API_BASE_URL must be set in /etc/eventpulse-edge/edge.env}"
+
+EDGE_AGENT_IMAGE="${EDGE_AGENT_IMAGE:-eventpulse-edge-agent:latest}"
+PULL_POLICY="${EDGE_AGENT_PULL_POLICY:-missing}"
+HOST_SPOOL_DIR="${EDGE_HOST_SPOOL_DIR:-/var/lib/eventpulse-edge/spool}"
+CONTAINER_SPOOL_DIR="${EDGE_SPOOL_DIR:-/data/spool}"
+
+# Optional: pass host devices/groups into the container for real sensors/camera.
+# These are loaded from /etc/eventpulse-edge/edge.env by systemd.
+#
+# Examples:
+#   EDGE_DOCKER_DEVICES="/dev/i2c-1,/dev/spidev0.0,/dev/video0"
+#   EDGE_DOCKER_GROUP_ADD="998"         # e.g. getent group i2c
+#   EDGE_DOCKER_RUN_AS_ROOT="true"      # easiest (least secure) for hardware bring-up
+
+DEVICE_ARGS=()
+if [[ -n "${EDGE_DOCKER_DEVICES:-}" ]]; then
+  # split on comma and/or whitespace
+  IFS=', ' read -r -a _devs <<< "${EDGE_DOCKER_DEVICES}"
+  for _d in "${_devs[@]}"; do
+    [[ -n "${_d}" ]] && DEVICE_ARGS+=(--device "${_d}")
+  done
+fi
+
+GROUP_ARGS=()
+if [[ -n "${EDGE_DOCKER_GROUP_ADD:-}" ]]; then
+  IFS=', ' read -r -a _groups <<< "${EDGE_DOCKER_GROUP_ADD}"
+  for _g in "${_groups[@]}"; do
+    [[ -n "${_g}" ]] && GROUP_ARGS+=(--group-add "${_g}")
+  done
+fi
+
+USER_ARGS=()
+if [[ "${EDGE_DOCKER_RUN_AS_ROOT:-false}" == "true" ]]; then
+  USER_ARGS+=(--user 0:0)
+fi
+
+EXTRA_ARGS=()
+if [[ -n "${EDGE_DOCKER_EXTRA_ARGS:-}" ]]; then
+  # shellcheck disable=SC2206
+  EXTRA_ARGS=(${EDGE_DOCKER_EXTRA_ARGS})
+fi
+
+if [[ "${PULL_POLICY}" != "always" && "${PULL_POLICY}" != "missing" ]]; then
+  echo "[edge-run] invalid EDGE_AGENT_PULL_POLICY='${PULL_POLICY}', using 'missing'" >&2
+  PULL_POLICY="missing"
+fi
+
+# Ensure spool exists and is writable by the container user (uid 10001).
+mkdir -p "${HOST_SPOOL_DIR}"
+chown -R 10001:10001 "${HOST_SPOOL_DIR}" >/dev/null 2>&1 || true
+chmod 750 "${HOST_SPOOL_DIR}" >/dev/null 2>&1 || true
+
+# Best-effort: remove any stale container from previous runs.
+docker rm -f eventpulse-edge-agent >/dev/null 2>&1 || true
+
+# Run attached so systemd can supervise it.
+exec docker run \
+  --name eventpulse-edge-agent \
+  --pull="${PULL_POLICY}" \
+  --log-driver=journald \
+  --security-opt=no-new-privileges \
+  --cap-drop=ALL \
+  "${USER_ARGS[@]}" \
+  "${DEVICE_ARGS[@]}" \
+  "${GROUP_ARGS[@]}" \
+  "${EXTRA_ARGS[@]}" \
+  --env-file /etc/eventpulse-edge/edge.env \
+  -v "${HOST_SPOOL_DIR}":"${CONTAINER_SPOOL_DIR}" \
+  "${EDGE_AGENT_IMAGE}"

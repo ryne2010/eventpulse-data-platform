@@ -16,9 +16,11 @@ variable "services" {
     "vpcaccess.googleapis.com",
     "pubsub.googleapis.com",
     "cloudscheduler.googleapis.com",
+    "cloudtasks.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
-    "secretmanager.googleapis.com"
+    "secretmanager.googleapis.com",
+    "storage.googleapis.com"
   ]
 }
 

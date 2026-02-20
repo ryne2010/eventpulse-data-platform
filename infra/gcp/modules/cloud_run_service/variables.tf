@@ -30,6 +30,18 @@ variable "container_port" {
   default     = 8080
 }
 
+variable "concurrency" {
+  type        = number
+  description = "Maximum concurrent requests per instance."
+  default     = 10
+}
+
+variable "timeout" {
+  type        = string
+  description = "Request timeout (duration string like '300s')."
+  default     = "900s"
+}
+
 variable "cpu" {
   type        = string
   description = "CPU limit (e.g., '1')."
@@ -64,6 +76,12 @@ variable "allow_unauthenticated" {
   type        = bool
   description = "Whether to allow unauthenticated invocations (public service)."
   default     = false
+}
+
+variable "invoker_service_account_emails" {
+  type        = list(string)
+  description = "Additional service accounts to grant roles/run.invoker on this service (used for Cloud Tasks OIDC, scheduler, etc.)."
+  default     = []
 }
 
 variable "env_vars" {

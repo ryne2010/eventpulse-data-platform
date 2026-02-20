@@ -1,0 +1,64 @@
+dataset: edge_telemetry
+description: >
+  Edge telemetry events emitted by Raspberry Pi (RPi) sensors.
+
+  Designed for intermittent connectivity (5G SIM) with at-least-once delivery:
+  events include a stable event_id for idempotency, and optional heartbeat rows
+  for device health.
+
+primary_key: event_id
+drift_policy: warn
+
+quality:
+  required_columns: [event_id, device_id, event_type, ts]
+  not_null: [event_id, device_id, event_type, ts]
+  unique: [event_id]
+  # Optional fields: keep tolerances high so heartbeat-only devices don't fail.
+  max_null_fraction:
+    lat: 0.99
+    lon: 0.99
+    value: 0.99
+
+columns:
+  event_id:
+    type: string
+    description: Globally unique event identifier (idempotency key).
+  device_id:
+    type: string
+    description: Edge device identifier (RPi hostname / serial / assigned ID).
+  event_type:
+    type: string
+    description: reading|heartbeat|error
+  sensor:
+    type: string
+    description: Sensor name/metric for reading events (ex. temp_c, humidity_pct).
+  value:
+    type: number
+    description: Numeric reading value (nullable for heartbeat/error events).
+  units:
+    type: string
+    description: Units for value (ex. C, %, kPa).
+  ts:
+    type: datetime
+    description: Event timestamp (UTC).
+  lat:
+    type: number
+    description: Latitude (optional).
+  lon:
+    type: number
+    description: Longitude (optional).
+  battery_v:
+    type: number
+    description: Battery voltage (optional).
+  rssi_dbm:
+    type: number
+    description: Cellular signal RSSI in dBm (optional).
+  firmware_version:
+    type: string
+    description: Device firmware/agent version (optional).
+  status:
+    type: string
+    description: Status text for heartbeat rows (optional).
+  message:
+    type: string
+    description: Freeform message (errors/notes) (optional).

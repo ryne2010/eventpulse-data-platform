@@ -1,6 +1,6 @@
 [project]
 name = "eventpulse-data-platform"
-version = "0.2.0"
+version = "0.3.5"
 description = "Local-first event-driven data platform: ingestion + quality + drift detection + curated outputs."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,13 @@ dev = [
   "pytest>=8.0.0",
   "ruff>=0.6.0",
   "mypy>=1.8.0",
+  "pyright>=1.1.0",
+  "pre-commit>=3.7.0",
+  # Mypy stubs for common third-party libs used by this repo.
+  "types-PyYAML>=6.0.0",
+  "pandas-stubs>=2.2.0",
+  "types-psycopg2>=2.9.0",
+  "types-requests>=2.32.0",
 ]
 
 [tool.ruff]

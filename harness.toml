@@ -1,0 +1,61 @@
+[project]
+name = "eventpulse-data-platform"
+description = "Local-first reference implementation of an event-driven data platform (FastAPI + Postgres + Redis + React)"
+
+[harness]
+# Fail fast stops on first failing step. Set false to run everything and summarize.
+fail_fast = true
+
+[autodetect]
+# Preferred runners (used when the corresponding project files are detected).
+python_runner = "uv"
+node_runner = "pnpm"
+
+# If true and a workspace is detected, run scripts recursively with --if-present.
+node_recursive = true
+
+# If true, missing tools/config produce SKIP (non-fatal). Use --strict to treat SKIP as failure.
+skip_missing_tools = true
+
+[autodetect.python]
+# Opinionated defaults used when a Python project is detected but no tool config is present.
+# Set any value to "auto" to revert to config-only behavior.
+linter = "ruff"
+formatter = "ruff"
+# We run pyright (preferred) when pyrightconfig.json is present; otherwise fall back to mypy.
+typechecker = "pyright"
+testrunner = "pytest"
+
+# Commands can be set explicitly, or left empty to use auto-detection across ecosystems.
+# Each value may be:
+#   - "" (use auto-detection)
+#   - "..." (a single command)
+#   - ["...", "..."] (a sequence of commands)
+[commands]
+fmt = [
+  "uv run ruff format .",
+  "bash scripts/terraform_fmt.sh"
+]
+lint = [
+  "uv run ruff check .",
+  "uv run ruff format --check .",
+  "bash scripts/terraform_fmt_check.sh",
+  "bash scripts/web_lint.sh"
+]
+typecheck = [
+  "uv run pyright",
+  "uv run mypy eventpulse",
+  "bash scripts/web_typecheck.sh"
+]
+test = [
+  "uv run pytest -q"
+]
+build = [
+  "bash scripts/web_build.sh"
+]
+
+# Optional: paths to help agents find important areas
+[paths]
+source = ["eventpulse", "services", "web/src", "infra"]
+tests = ["tests"]
+docs = ["docs"]

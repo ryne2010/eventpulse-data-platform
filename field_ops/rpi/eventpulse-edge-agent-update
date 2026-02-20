@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pull the latest edge-agent image and restart the systemd service.
+
+ENV_FILE="/etc/eventpulse-edge/edge.env"
+if [[ -f "${ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  set -a
+  source "${ENV_FILE}"
+  set +a
+fi
+
+EDGE_AGENT_IMAGE="${EDGE_AGENT_IMAGE:-eventpulse-edge-agent:latest}"
+
+echo "[edge-update] pulling: ${EDGE_AGENT_IMAGE}" >&2
+docker pull "${EDGE_AGENT_IMAGE}" >&2 || true
+
+echo "[edge-update] restarting systemd unit: eventpulse-edge-agent.service" >&2
+systemctl restart eventpulse-edge-agent.service
+
+systemctl --no-pager --full status eventpulse-edge-agent.service || true

@@ -9,6 +9,10 @@ resource "google_cloud_run_v2_service" "service" {
   template {
     service_account = var.service_account_email
 
+    # Cloud Run instance-level settings
+    max_instance_request_concurrency = var.concurrency
+    timeout                         = var.timeout
+
     scaling {
       min_instance_count = var.min_instances
       max_instance_count = var.max_instances
@@ -74,4 +78,16 @@ resource "google_cloud_run_v2_service_iam_member" "invoker_all_users" {
 
   role   = "roles/run.invoker"
   member = "allUsers"
+}
+
+
+resource "google_cloud_run_v2_service_iam_member" "invoker_service_accounts" {
+  for_each = toset([for e in var.invoker_service_account_emails : e if e != ""]) 
+
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.service.name
+
+  role   = "roles/run.invoker"
+  member = "serviceAccount:${each.value}"
 }

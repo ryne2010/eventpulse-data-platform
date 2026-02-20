@@ -1,32 +1,28 @@
 repos:
-  # Basic repo hygiene (fast, catches common "oops" before CI).
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
-      - id: check-yaml
-      - id: check-merge-conflict
       - id: trailing-whitespace
       - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: mixed-line-ending
       - id: check-added-large-files
+        args: ["--maxkb=5120"]
 
-  # Python: run the same tools CI runs (via uv).
-  # Teaching point: pre-commit hooks should be *fast* and match CI so you get feedback early.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.1
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format
+
+  # Terraform formatting (requires terraform installed)
   - repo: local
     hooks:
-      - id: ruff
-        name: ruff (uv)
-        entry: uv run ruff check .
-        language: system
-        pass_filenames: false
-
-      - id: mypy
-        name: mypy (uv)
-        entry: uv run mypy eventpulse
-        language: system
-        pass_filenames: false
-
       - id: terraform-fmt
-        name: terraform fmt (check)
-        entry: terraform fmt -check -recursive
+        name: terraform fmt (recursive)
+        entry: bash scripts/terraform_fmt.sh
         language: system
         pass_filenames: false

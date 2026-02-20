@@ -1,50 +1,59 @@
-name: ci
+name: CI
 
 on:
+  push:
+    branches: ["main", "master"]
   pull_request:
-  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  backend:
+  lint-typecheck-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install uv
-        run: python -m pip install --upgrade pip uv
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.9.21"
+          enable-cache: true
 
-      - name: Install deps
-        run: uv sync --dev
+      - name: Install Python deps
+        run: uv sync --frozen --dev
 
-      - name: Lint (ruff)
-        run: uv run ruff check .
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
-      - name: Typecheck (mypy)
-        run: uv run mypy eventpulse
+      - name: Enable corepack
+        run: corepack enable
 
-      - name: Compile smoke
+      - name: Install Node deps (workspace)
+        run: pnpm install --frozen-lockfile
+
+      - name: Repo lint / typecheck / tests
         run: |
-          uv run python -m compileall eventpulse
-          uv run python -m compileall scripts
+          make lint
+          make typecheck
+          make test
 
-  frontend:
+  terraform-hygiene:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
-          node-version: "20"
+          terraform_version: "1.9.8"
 
-      - name: Enable pnpm
-        run: corepack enable
-
-      - name: Install + build
-        working-directory: web
-        run: |
-          pnpm install --no-frozen-lockfile
-          pnpm build
+      - name: Terraform hygiene
+        run: make tf-check

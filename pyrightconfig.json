@@ -1,0 +1,25 @@
+{
+  "include": [
+    "eventpulse",
+    "scripts"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "data",
+    "infra",
+    "web",
+    "dist",
+    "build",
+    ".mypy_cache",
+    ".pytest_cache"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingTypeStubs": false,
+  "reportMissingImports": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownArgumentType": false,
+  "reportUnknownParameterType": false
+}

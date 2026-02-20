@@ -1,219 +1,227 @@
-# EventPulse Data Platform (Local‑First)
+# EventPulse Data Platform (Local-first → Cloud Run)
 
-## Quickstart
+EventPulse is a small, production-minded reference implementation of an event-driven data platform:
 
-Local-first dev (recommended):
+- **Immutable raw landing zone** (filesystem or GCS)
+- **Schema drift detection** + configurable drift policies
+- **Contract-driven quality gates**
+- **Audit log + quality trends** (observability/governance)
+- **Curated outputs** (Postgres tables) with **lineage metadata columns**
+- **Per-ingestion lineage artifact** persisted to Postgres
+- **Async processing**
+  - Local dev: Redis/RQ (or inline)
+  - Cloud Run: Cloud Tasks → internal processing endpoint
+
+It’s designed to be easy to understand, easy to run locally on an **M2 Max MacBook Pro**, and easy to deploy to **Cloud Run**.
+
+---
+
+## Quickstart (local, Docker Compose)
+
+### Prereqs
+
+- Docker Desktop
+- `make`
+
+Optional (for running tooling outside Docker): `uv`, `node`, `pnpm`.
+
+### Run
 
 ```bash
-make doctor
+cp .env.example .env
 make up
 ```
 
-Optional GCP demo deploy:
+If you prefer a hybrid loop (DB/Redis in Docker, API on your host), use:
 
 ```bash
-make init GCLOUD_CONFIG=personal-portfolio PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
-make auth          # only needed once per machine/user
-make doctor-gcp
-make deploy-gcp
+cp .env.host.example .env
 ```
 
-EventPulse is a **local‑first reference implementation** of an event-driven data platform you can run on your laptop with Docker.
-It demonstrates production-grade patterns you can reuse in cloud environments (GCP, AWS, Azure) while keeping the local developer
-experience simple.
+See `docs/LOCAL_DEV.md` for both workflows.
 
-This repo focuses on:
+Optional: set `TASK_TOKEN` in `.env` to enable internal endpoints (signed uploads, from_gcs backfills, incoming listing, and contract editing).
 
-- **Replayable ingestion**: immutable raw landing zone + idempotent processing
-- **Schema drift handling**: detect column changes and apply a drift policy (warn/fail/allow)
-- **Data quality gates**: required fields, types, uniqueness, null thresholds, numeric ranges
-- **Curated warehouse tables**: upsert into typed tables with lineage metadata
-- **Operational visibility**: ingestion status + quality reports + drift reports via API
-- **Optional GCP path**: design notes + Terraform skeleton for Cloud Run / Pub/Sub / BigQuery patterns
+Open:
 
-> ⚠️ This is a **reference implementation**, not a complete enterprise product. It is intentionally easy to read, fork, and adapt.
+- UI: `http://localhost:8081`
+- API health: `http://localhost:8081/health`
+
+In the UI, use the top nav:
+
+- **Dashboard** — status totals, backlog, and quick actions
+- **Ingestions** — browse events; click through to quality/drift/lineage/audit
+- **Datasets** — contract explorer/editor, schema history, curated sample, and marts
+- **Products** — catalog of published marts (consumption layer)
+- **Devices** — edge telemetry device health + **map** + **alerts** + provisioning (edge_telemetry demo)
+  - click a device id for per-device telemetry + day-2 ops commands
+- **Media** — optional edge device photo/video artifacts (webcam snapshots), requires internal auth
+- **Trends** — quality pass/fail trends across recent ingestions
+- **Audit** — operational audit log
+- **Ingest** — direct upload (dev), signed URL upload (prod), and backfills
+- **Ops** — runtime config + API docs link
+
+### Seed a demo dataset
+
+```bash
+curl -X POST 'http://localhost:8081/api/demo/seed/parcels?limit=50&per_ingestion_max=10'
+
+# Edge telemetry demo (RPi-style)
+curl -X POST 'http://localhost:8081/api/demo/seed/edge_telemetry?limit=200&per_ingestion_max=200'
+```
+
+Then visit the UI and watch ingestions progress (or use **Dashboard → Seed demo data**).
 
 ---
 
-## Quickstart (Local)
+## Ingestion paths
 
-### 1) Prereqs
-- Docker + Docker Compose
+### 1) Drop files into the incoming folder (watcher → /api/ingest/from_path)
 
-Optional (for local scripting / linting):
-- Python 3.11+
-- **uv** (`pip install uv`)
+The watcher container polls `/data/incoming` and calls the API. Start it with: `make watch`.
 
-### 2) Start the stack
-```bash
-make up
-```
+> This path uses a privileged endpoint (`/api/ingest/from_path`) and requires internal auth.
+> For local dev, set `TASK_TOKEN` in `.env` (the watcher automatically sends `X-Task-Token`).
+> For Cloud Run, rely on IAM (and optionally a token for defense-in-depth).
 
-Services started:
-- UI (React + TanStack): http://localhost:8081
-- API (base): http://localhost:8081/api
-- Swagger docs: http://localhost:8081/docs
-- Postgres (metadata + curated tables): localhost:5432
-- Redis (queue): localhost:6379
-- Worker: background job processor
-- (Optional) Watcher: directory polling → auto-ingest (see below)
+- Incoming volume (host): `./data/incoming`
+- Files are copied into the raw landing zone and then **archived** to avoid reprocessing.
 
-Home page demo:
-- The home page map + charts are powered by **curated parcels** (synthetic recorder-style sales) limited to 50 rows.
-- If the table is empty, click **Seed 50 parcels** on `/` (or call `POST /api/demo/seed/parcels?limit=50`).
-  - Seeding is split into multiple ingestions of **≤15 parcels each** so pipeline activity previews have rows per ingestion.
+### 2) Upload directly to the API (no multipart)
 
-### Troubleshooting
-
-If the API fails to start with:
-
-```
-psycopg2.OperationalError: could not translate host name "postgres" to address
-```
-
-it usually means the `postgres` container ended up in a stale/broken networking state. Fix by recreating the dependency containers:
+This endpoint accepts `application/octet-stream` and streams the body to disk before registering it.
 
 ```bash
-docker compose up -d --force-recreate postgres redis
-docker compose up --build
+curl -X POST \
+  'http://localhost:8081/api/ingest/upload?dataset=parcels&filename=parcels.xlsx&source=curl' \
+  -H 'Content-Type: application/octet-stream' \
+  --data-binary @./data/samples/parcels_baseline.xlsx
+
+> **Security note:** In production, consider setting `INGEST_AUTH_MODE=token` and a strong
+> `INGEST_TOKEN` for human/admin uploads. Field devices should use the **per-device token**
+> model (`EDGE_AUTH_MODE=token`) and the `/api/edge/*` endpoints.
 ```
 
-### 3) Generate sample files and ingest
-Generate a baseline Excel file and a drifted Excel file into `./data/incoming/`:
-```bash
-uv sync --dev
-uv run python scripts/generate_sample_data.py --out ./data/incoming --rows 500
-```
+> **Cloud Run note:** request bodies have size limits. For larger files, use one of the GCS-backed paths:
+>
+> - **Recommended**: mint a **signed URL** (`POST /api/uploads/gcs_signed_url`), `PUT` the file to GCS, then (optionally) let **GCS finalize events** auto-register the ingestion.
+> - **Manual**: upload to GCS yourself (e.g., `gsutil cp`) and call `POST /api/ingest/from_gcs`.
+>
+> Example (manual register after `make deploy-gcp`):
+>
+> ```bash
+> URL=$(terraform -chdir=infra/gcp/cloud_run_api_demo output -raw service_url)
+> RAW_BUCKET=$(terraform -chdir=infra/gcp/cloud_run_api_demo output -raw raw_bucket)
+> TASK_TOKEN_SECRET=$(terraform -chdir=infra/gcp/cloud_run_api_demo output -raw task_token_secret_name)
+> TASK_TOKEN=$(gcloud secrets versions access latest --secret "$TASK_TOKEN_SECRET")
+>
+> gsutil cp ./data/samples/parcels_baseline.xlsx "gs://${RAW_BUCKET}/uploads/parcels_baseline.xlsx"
+>
+> curl -sS -X POST "${URL}/api/ingest/from_gcs" \
+>   -H "X-Task-Token: ${TASK_TOKEN}" \
+>   -H 'Content-Type: application/json' \
+>   -d '{"dataset":"parcels","gcs_uri":"gs://'"${RAW_BUCKET}"'/uploads/parcels_baseline.xlsx","source":"gsutil"}' | jq .
+> ```
+>
+> For signed URLs + event-driven ingestion wiring, see `docs/DEPLOY_GCP.md`.
+### 3) Edge devices (RPi / field sensors)
 
-Ingest one file (calls the API and queues processing):
-```bash
-curl -s -X POST "http://localhost:8081/api/ingest/from_path" \
-  -H "Content-Type: application/json" \
-  -d '{"dataset":"parcels","relative_path":"parcels_baseline.xlsx","source":"demo"}' | jq
-```
+Field devices (Raspberry Pi sensors over 5G/LTE) should use the **edge ingestion**
+endpoints and the per-device token auth model:
 
-List ingestions:
-```bash
-curl -s "http://localhost:8081/api/ingestions?limit=20" | jq
-```
+- `POST /api/edge/uploads/gcs_signed_url` → device uploads directly to GCS via signed URL
+- `POST /api/edge/ingest/from_gcs` → finalize ingestion (register + enqueue)
+- `POST /api/edge/ingest/upload` → direct API upload (local dev / small payloads)
 
-Fetch details + quality report:
-```bash
-INGESTION_ID="<copy-from-list>"
-curl -s "http://localhost:8081/api/ingestions/${INGESTION_ID}" | jq
-```
+Fast provisioning option (recommended for deployment speed): configure `EDGE_ENROLL_TOKEN`
+on the API and let devices self-enroll via `POST /api/edge/enroll`.
 
-Preview curated data:
-```bash
-curl -s "http://localhost:8081/api/datasets/parcels/curated/sample?limit=10" | jq
-```
+See `docs/EDGE_RPI.md` for a practical Raspberry Pi deployment walkthrough.
 
-### Optional: auto-ingest by watching `./data/incoming`
-Start the watcher container (polls and ingests new files automatically):
-```bash
-docker compose --profile watch up --build  # (or wire a Make target)
-```
-
-Drop new files into `./data/incoming/` and they will be ingested automatically.
 
 ---
 
-## UI development (React + TanStack)
+## Cloud Run (production demo)
 
-The API container serves a built UI at `/` for convenience.
+The Cloud Run lane is optimized for serverless:
 
-If you want a fast local dev loop:
+- **Raw landing zone**: GCS bucket
+- **Async processing**: Cloud Tasks
+- **Metadata + curated tables**: Postgres (bring your own DB URL)
 
-```bash
-# Terminal 1
-docker compose up --build
+### Deploy
 
-# Terminal 2
-cd web
-corepack enable
-pnpm install
-pnpm dev
-```
-
-Open: http://localhost:5174
-
----
-
-## Key Concepts
-
-### Raw landing zone
-All inbound files are copied into an immutable raw structure:
-
-```
-data/raw/<dataset>/<YYYY-MM-DD>/<sha256>.<ext>
-```
-
-The ingestion record stores the raw path and hash so you can:
-- dedupe repeated deliveries
-- replay/backfill safely
-- audit exactly what was processed
-
-### Data contracts
-Dataset rules live in YAML (see `data/contracts/`), e.g. `parcels.yaml`:
-- required columns
-- column types
-- primary key uniqueness
-- null thresholds
-- min/max constraints
-- drift policy
-
-### Drift policy
-- `warn` (default): proceed but record a drift report
-- `fail`: stop processing and mark ingestion as failed
-- `allow`: accept drift silently (still records schema history)
-
----
-
-## Environment configuration
-
-Copy `.env.example` to `.env` and customize:
-
-- `DATABASE_URL`
-- `REDIS_URL`
-- `RAW_DATA_DIR`
-- `CONTRACTS_DIR`
-- `INCOMING_DIR`
-- `ARCHIVE_DIR`
-- `DRIFT_POLICY_DEFAULT`
-- `MAX_FILE_MB`
-
-See `.env.example` for details.
-
----
-
-## Optional: GCP deployment (Cloud Run demo)
-
-This repo includes a **working, team-ready** Cloud Run demo deployment (Terraform + Cloud Build) under:
-- `infra/gcp/cloud_run_api_demo/`
-
-Quickstart:
+1) Authenticate and configure gcloud defaults (one-time):
 
 ```bash
-# one-command deploy (remote state + Cloud Build)
-make deploy-gcp
+make auth
+make init PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
+```
 
-# add DATABASE_URL (reads from stdin)
+Or, equivalently (manual):
+
+```bash
+gcloud auth login
+gcloud auth application-default login
+gcloud config set project YOUR_PROJECT_ID
+gcloud config set run/region us-central1
+```
+
+2) Provision prerequisite infra (APIs, Artifact Registry, service accounts, **secret containers**):
+
+```bash
+make infra-gcp ENV=dev
+```
+
+3) Add required secret versions (paste values, then Ctrl-D):
+
+```bash
 make db-secret
+make task-token-secret
+
+# Optional (protect public ingest endpoint)
+# make ingest-token-secret
+
+# Optional (fast edge provisioning)
+# TF_VAR_enable_edge_enroll=true make edge-enroll-token-secret
 ```
 
-See:
-- `docs/DEPLOY_GCP.md`
-- `docs/TEAM_WORKFLOW.md`
+4) Build + deploy:
 
+```bash
+make deploy-gcp ENV=dev
+```
+
+Tip: `make deploy-gcp` runs a secrets preflight (`make check-secrets-gcp`) and fails early if versions are missing.
+
+5) Verify:
+
+```bash
+make verify-gcp ENV=dev
+```
 
 ---
 
-## License
-Apache-2.0
+## Docs
 
+- `docs/QUICK_TOUR.md` — hands-on walkthrough
+- `docs/LOCAL_DEV.md` — local dev workflows (Docker and hybrid)
+- `docs/DEPLOY_GCP.md` — Cloud Run deployment notes + troubleshooting
+- `docs/EDGE_RPI.md` — edge telemetry (Raspberry Pi agent)
+- `docs/FIELD_OPS.md` — field deployment runbook (RPi + LTE/5G)
+- `docs/HARDWARE.md` — cheap + available field hardware options
+- `docs/MAINTENANCE.md` — DB size widgets + pruning retention data
+- `docs/OBSERVABILITY.md` — logs, request IDs, and trace correlation
+- `docs/SCHEMA_DRIFT.md` — dataset schema drift logic and policies
+- `docs/DRIFT_DETECTION.md` — Terraform drift detection notes (infra)
+- `RUNBOOK.md` — common operational tasks
+- `docs/RUNBOOKS/` — incident/debug/release runbooks
 
-## UI stack
+## Development notes
 
-- Vite + React
-- TanStack Router/Query/Table + Virtual + Pacer + Ranger
-- Tailwind + shadcn-style components (vendored in `web/src/portfolio-ui`)
+- Dataset names are normalized to lowercase and validated (safe for paths + SQL identifiers).
+- Ingestion processing is **idempotent**: only `RECEIVED` and `FAILED_EXCEPTION` ingestions are auto-claimed for processing.
+  - Replays create a **new** ingestion record referencing the same raw artifact.
+- If an ingestion is stuck in `PROCESSING` (e.g., worker crash after claiming), you can reclaim it:
+  - Local/dev: `make reclaim-stuck`
+  - Cloud Run: `POST /internal/admin/reclaim_stuck` (protected via TASK_AUTH_MODE)

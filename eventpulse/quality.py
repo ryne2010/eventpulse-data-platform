@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
-import numpy as np
 import pandas as pd
 
 from .contracts import DatasetContract
@@ -130,8 +129,8 @@ def _looks_like_int(series: pd.Series) -> bool:
         if numeric.notna().mean() <= 0.8:
             return False
         # int-like if all decimals are .0
-        frac = (numeric.dropna() % 1.0)
-        return (frac < 1e-9).all()
+        frac = numeric.dropna() % 1.0
+        return bool((frac < 1e-9).all())
     except Exception:
         return False
 
@@ -141,4 +140,5 @@ def _looks_like_bool(series: pd.Series) -> bool:
     if s.empty:
         return True
     allowed = {"true", "false", "1", "0", "yes", "no", "y", "n"}
-    return s.isin(list(allowed)).mean() > 0.8
+    # Pandas returns numpy scalar types for reductions; cast to builtin bool for type-checkers.
+    return bool(s.isin(list(allowed)).mean() > 0.8)

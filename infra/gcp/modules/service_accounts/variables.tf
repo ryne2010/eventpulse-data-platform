@@ -24,6 +24,24 @@ variable "runtime_roles" {
   ]
 }
 
+variable "create_tasks_invoker_account" {
+  type        = bool
+  description = "Whether to create a dedicated service account used for Cloud Tasks OIDC invocation of Cloud Run."
+  default     = true
+}
+
+variable "tasks_invoker_account_id" {
+  type        = string
+  description = "Service account ID used for Cloud Tasks OIDC invocation of Cloud Run."
+  default     = "sa-tasks-invoker"
+}
+
+variable "tasks_invoker_display_name" {
+  type        = string
+  description = "Tasks invoker service account display name."
+  default     = "Cloud Tasks Invoker"
+}
+
 variable "create_ci_account" {
   type        = bool
   description = "Whether to create a CI service account (for Terraform/CI pipelines)."

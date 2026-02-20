@@ -10,6 +10,9 @@ export default defineConfig({
     port: 5174,
     proxy: {
       '/api': { target, changeOrigin: true },
+      '/docs': { target, changeOrigin: true },
+      '/openapi.json': { target, changeOrigin: true },
+      '/redoc': { target, changeOrigin: true },
       '/healthz': { target, changeOrigin: true },
     },
   },

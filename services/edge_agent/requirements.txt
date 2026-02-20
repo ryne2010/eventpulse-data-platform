@@ -1,0 +1,3 @@
+# Keep the edge agent container lean.
+# Pin to the same requests version used by the main project lock.
+requests==2.32.3

@@ -1,53 +1,45 @@
-# Cloud Run API deployment (Terraform) — EventPulse
+# Cloud Run API Demo (Terraform root)
 
-This Terraform root deploys the **EventPulse API + UI** as a single Cloud Run service.
+This Terraform root deploys EventPulse to Cloud Run with a serverless-friendly configuration:
 
-What this demonstrates:
-- remote Terraform state (GCS)
-- plan/apply separation (team-friendly)
-- Artifact Registry + Cloud Build build flow
-- Secret Manager first-class dependency (DATABASE_URL)
-- optional Google Groups IAM starter pack
-- optional dashboards + alerts (observability as code)
+- GCS raw landing zone (`STORAGE_BACKEND=gcs`)
+- Cloud Tasks async ingestion (`QUEUE_BACKEND=cloud_tasks`)
+- Postgres metadata + curated tables (provide `DATABASE_URL` via Secret Manager)
 
-## Recommended workflow
+Optional public ingest hardening:
 
-Use the repo root Makefile:
+- `TF_VAR_ingest_auth_mode=token` → sets `INGEST_AUTH_MODE=token` on the service and wires `INGEST_TOKEN` from Secret Manager.
+
+Optional edge fleet convenience:
+
+- `TF_VAR_enable_edge_enroll=true` → wires `EDGE_ENROLL_TOKEN` from Secret Manager and enables `/api/edge/enroll`
+  for fast field-device provisioning.
+
+See:
+
+- `docs/DEPLOY_GCP.md`
+
+## Optional: Cloud Scheduler jobs
+
+This stack can optionally create Cloud Scheduler jobs for routine operations:
+
+- reclaim stuck ingestions (PROCESSING without heartbeat)
+- optional retention prune (audit + old ingestion metadata)
+
+Enable:
 
 ```bash
-make deploy-gcp
-```
-
-Or:
-
-```bash
-make plan-gcp
+TF_VAR_allow_unauthenticated=false \
+TF_VAR_enable_scheduler_jobs=true \
 make apply-gcp
 ```
 
-## Configuration knobs
-
-| Variable | Default | Description |
-|---|---:|---|
-| `ENV` | `dev` | Environment label (dev|stage|prod). Drives naming + labels. |
-| `SERVICE_NAME` | `eventpulse-$(ENV)` | Cloud Run service name. |
-| `WORKSPACE_DOMAIN` | (empty) | Enables group-based IAM if set. |
-| `GROUP_PREFIX` | `eventpulse` | Prefix used to derive group emails. |
-| `ENABLE_OBSERVABILITY` | `true` | Create a dashboard + 2 basic alert policies. |
-
-## DATABASE_URL secret
-
-Terraform creates the secret container `eventpulse-database-url` but **does not** set a value.
-
-Add a version before the service can start successfully:
+Enable prune job (recommended: start with dry-run):
 
 ```bash
-echo "postgresql://USER:PASSWORD@HOST:5432/eventpulse" | \
-  gcloud secrets versions add eventpulse-database-url --data-file=-
+TF_VAR_allow_unauthenticated=false \
+TF_VAR_enable_scheduler_jobs=true \
+TF_VAR_enable_prune_job=true \
+TF_VAR_prune_dry_run=true \
+make apply-gcp
 ```
-
-## Next docs
-
-- `docs/DEPLOY_GCP.md` — end-to-end deploy steps
-- `docs/IAM_STARTER_PACK.md` — group roles (clients / engineers / auditors)
-- `docs/OBSERVABILITY.md` — dashboards + alert policies
