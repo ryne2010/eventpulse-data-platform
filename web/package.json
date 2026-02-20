@@ -31,7 +31,7 @@
     "typescript": "^5.6.3",
     "vite": "^5.4.8",
     "@vitejs/plugin-react": "^4.3.2",
-    "tailwindcss": "^3.4.13",
+    "tailwindcss": "^4.2.0",
     "postcss": "^8.4.47",
     "autoprefixer": "^10.4.20",
     "@tanstack/react-devtools": "^0.9.0",
