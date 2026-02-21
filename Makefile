@@ -727,7 +727,7 @@ tf-fmt: ## Terraform fmt check (no changes)
 		terraform -chdir=$(TF_DIR) fmt -check -recursive; \
 		elif command -v docker >/dev/null 2>&1; then \
 		  echo "terraform not found; running terraform fmt check via Docker"; \
-		  docker run --rm -v "$$(pwd)/$(TF_DIR):/workspace" -w /workspace hashicorp/terraform:1.9.8 fmt -check -recursive; \
+		  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) hashicorp/terraform:1.9.8 fmt -check -recursive; \
 		else \
 		  echo "terraform not found and docker not available; skipping tf-fmt" >&2; \
 		fi
@@ -738,8 +738,8 @@ tf-validate: ## Terraform validate (no remote backend required)
 		terraform -chdir=$(TF_DIR) validate; \
 		elif command -v docker >/dev/null 2>&1; then \
 		  echo "terraform not found; running terraform validate via Docker"; \
-		  docker run --rm -v "$$(pwd)/$(TF_DIR):/workspace" -w /workspace hashicorp/terraform:1.9.8 init -backend=false -upgrade >/dev/null; \
-		  docker run --rm -v "$$(pwd)/$(TF_DIR):/workspace" -w /workspace hashicorp/terraform:1.9.8 validate; \
+		  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) hashicorp/terraform:1.9.8 init -backend=false -upgrade >/dev/null; \
+		  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) hashicorp/terraform:1.9.8 validate; \
 		else \
 		  echo "terraform not found and docker not available; skipping tf-validate" >&2; \
 		fi
@@ -750,8 +750,8 @@ tf-lint: ## tflint (falls back to docker)
 	  (cd $(TF_DIR) && tflint --init && tflint); \
 	else \
 	  echo "tflint not found; running via Docker"; \
-	  docker run --rm -v "$$(pwd)/$(TF_DIR):/workspace" -w /workspace ghcr.io/terraform-linters/tflint:latest --init && \
-	  docker run --rm -v "$$(pwd)/$(TF_DIR):/workspace" -w /workspace ghcr.io/terraform-linters/tflint:latest; \
+	  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) ghcr.io/terraform-linters/tflint:latest --init && \
+	  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) ghcr.io/terraform-linters/tflint:latest; \
 	fi
 
 tf-sec: ## tfsec (falls back to docker)
@@ -766,10 +766,10 @@ tf-sec: ## tfsec (falls back to docker)
 tf-policy: ## OPA/Conftest policy gate for Terraform (falls back to docker)
 	@if command -v conftest >/dev/null 2>&1; then \
 	  echo "Running conftest (local)"; \
-	  conftest test --parser hcl2 --policy $(POLICY_DIR) $(TF_DIR); \
+	  conftest test --parser hcl2 --policy $(POLICY_DIR) $(TF_DIR)/*.tf; \
 	else \
 	  echo "conftest not found; running via Docker"; \
-	  docker run --rm -v "$$(pwd):/project" -w /project openpolicyagent/conftest:latest test --parser hcl2 --policy $(POLICY_DIR) $(TF_DIR); \
+	  docker run --rm -v "$$(pwd):/project" -w /project openpolicyagent/conftest:latest test --parser hcl2 --policy $(POLICY_DIR) $(TF_DIR)/*.tf; \
 	fi
 
 tf-check: tf-fmt tf-validate tf-lint tf-sec tf-policy ## Run all Terraform hygiene checks

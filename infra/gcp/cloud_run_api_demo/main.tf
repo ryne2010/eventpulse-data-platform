@@ -101,7 +101,8 @@ module "artifact_registry" {
 }
 
 # Raw landing zone bucket (immutable-ish).
-resource "google_storage_bucket" "raw" {
+# Reason: default lane prioritizes low-ops setup and uses Google-managed encryption at rest.
+resource "google_storage_bucket" "raw" { #tfsec:ignore:google-storage-bucket-encryption-customer-key
   name                        = local.raw_bucket_name
   project                     = var.project_id
   location                    = var.region
@@ -184,7 +185,7 @@ module "service_accounts" {
 # Bucket-level IAM (least privilege vs project-wide roles/storage.*)
 resource "google_storage_bucket_iam_member" "raw_bucket_object_admin" {
   bucket = google_storage_bucket.raw.name
-  role   = "roles/storage.objectAdmin"
+  role   = "roles/storage.objectUser"
   member = "serviceAccount:${module.service_accounts.runtime_service_account_email}"
 }
 
