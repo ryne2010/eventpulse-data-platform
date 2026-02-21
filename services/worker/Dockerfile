@@ -23,5 +23,6 @@ COPY eventpulse ./eventpulse
 
 USER appuser
 
-# RQ worker listens on queue name "eventpulse"
-CMD ["sh", "-c", "uv run rq worker eventpulse --url ${REDIS_URL}"]
+# RQ is already installed into /opt/venv at build time.
+# Start it directly so runtime does not try to mutate the environment as non-root.
+CMD ["sh", "-c", "rq worker eventpulse --url ${REDIS_URL}"]

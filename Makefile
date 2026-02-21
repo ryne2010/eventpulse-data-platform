@@ -80,7 +80,7 @@ endef
 
 .PHONY: help init auth \
 	doctor doctor-gcp \
-	up down reset clean clean-py clean-web clean-terraform logs watch \
+	up smoke down reset clean clean-py clean-web clean-terraform logs watch \
 	gen ingest list sample \
 	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp build-gcp deploy-gcp url-gcp verify-gcp logs-gcp destroy-gcp \
 	db-secret edge-enroll-token-secret edge-image-build edge-image-export edge-image-load edge-image-push lock web-check
@@ -90,6 +90,7 @@ help:
 	@echo "  init              One-time setup for GCP deploys (persist gcloud project/region)"
 	@echo "  auth              Authenticate gcloud user + ADC (interactive)"
 	@echo "  up               Start local stack (Postgres + API + worker + UI)"
+	@echo "  smoke            Run local smoke checks (compose + API/SPA + edge marts)"
 	@echo "  down             Stop local stack"
 	@echo "  reset            Remove volumes + reset local data directories"
 	@echo "  clean            Remove local build artifacts (.venv, caches, node_modules, dist, terraform workdirs)"
@@ -332,6 +333,10 @@ up: doctor init-data
 	# force-recreating core dependencies first (preserves bind-mounted data).
 	$(COMPOSE) up -d --force-recreate postgres redis
 	$(COMPOSE) up --build
+
+smoke: doctor init-data ## End-to-end local smoke check (Compose + API/SPA + edge mart)
+	cp -n .env.example .env || true
+	bash scripts/smoke.sh "$(LOCAL_URL)" $(COMPOSE)
 
 down:
 	$(COMPOSE) down

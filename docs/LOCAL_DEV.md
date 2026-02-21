@@ -51,6 +51,14 @@ Start the stack:
 make up
 ```
 
+Run a fast end-to-end smoke check:
+
+```bash
+make smoke
+```
+
+This brings up `api`, `worker`, `postgres`, and `redis`, verifies key API + SPA routes, seeds `edge_telemetry`, and waits for the `device_status` mart to become queryable.
+
 ### Data directory permissions (Compose lane)
 
 For better security parity with Cloud Run, the API/worker containers run as a **non-root** user by default.
