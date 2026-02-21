@@ -24,6 +24,12 @@ What it does **not** provision (by design):
 
 - **Postgres itself** (e.g., Cloud SQL). You provide a `DATABASE_URL` and EventPulse uses it for metadata + curated tables.
 
+If your `DATABASE_URL` uses the Cloud SQL unix-socket form (`host=/cloudsql/...`), also set:
+
+- `TF_VAR_cloud_sql_instance_connection_name=PROJECT:REGION:INSTANCE`
+
+This mounts `/cloudsql` in Cloud Run and grants `roles/cloudsql.client` to the runtime service account.
+
 ---
 
 ## Prereqs
@@ -31,6 +37,9 @@ What it does **not** provision (by design):
 - `gcloud` authenticated for your target project
 - Terraform installed
 - Container build permissions in the project
+
+Terraform provider versions are pinned via `infra/gcp/cloud_run_api_demo/.terraform.lock.hcl`.
+Keep that file committed so local, CI, and Cloud Run deploy lanes resolve the same provider builds.
 
 Recommended one-time setup:
 
@@ -69,6 +78,13 @@ make ingest-token-secret PROJECT_ID=your-project  # only needed when ingest toke
 TF_VAR_enable_edge_enroll=true make edge-enroll-token-secret PROJECT_ID=your-project
 
 # 3) Build + deploy
+make deploy-gcp PROJECT_ID=your-project REGION=us-central1 ENV=dev
+```
+
+Cloud SQL socket example:
+
+```bash
+TF_VAR_cloud_sql_instance_connection_name=your-project:us-central1:your-pg \
 make deploy-gcp PROJECT_ID=your-project REGION=us-central1 ENV=dev
 ```
 
@@ -135,6 +151,7 @@ Deploy with:
 TF_VAR_allow_unauthenticated=true \
 TF_VAR_edge_auth_mode=token \
 TF_VAR_enable_edge_signed_urls=true \
+TF_VAR_enable_edge_media=true \
 TF_VAR_enable_edge_enroll=true \
 make deploy-gcp PROJECT_ID=your-project REGION=us-central1 ENV=dev
 ```
@@ -149,6 +166,8 @@ Then configure runtime env vars (Terraform already wires most; confirm in the Cl
 - `EDGE_AUTH_MODE=token`
 - `EDGE_ALLOWED_DATASETS=edge_telemetry`
 - `ENABLE_EDGE_SIGNED_URLS=true`
+- `ENABLE_EDGE_MEDIA=true` (optional; enables `/api/edge/media/*`)
+- `EDGE_MEDIA_GCS_PREFIX=media` (or site-specific prefix)
 - `EDGE_OFFLINE_THRESHOLD_SECONDS=600` (optional; device offline heuristic)
 
 Provision each device using the internal admin endpoint:
@@ -164,6 +183,23 @@ Then run the edge agent container on the Pi with:
 - `EDGE_UPLOAD_MODE=signed_url`
 
 See: `docs/EDGE_RPI.md`.
+
+### Edge media lifecycle (cost control)
+
+If you enable edge media uploads, add a short lifecycle on the media prefix to avoid unbounded storage growth:
+
+```bash
+TF_VAR_enable_edge_media=true \
+TF_VAR_edge_media_gcs_prefix=media \
+TF_VAR_edge_media_prefix_retention_days=14 \
+make apply-gcp PROJECT_ID=your-project REGION=us-central1 ENV=dev
+```
+
+Notes:
+
+- This repo's Terraform applies the rule on the raw bucket prefix (`media/` by default).
+- Set `TF_VAR_edge_media_prefix_retention_days=0` to disable the prefix-specific rule.
+- See `docs/FIELD_OPS.md` for the media end-to-end validation checklist.
 
 ## Private deploy (IAM) with signed URLs + event-driven ingestion
 

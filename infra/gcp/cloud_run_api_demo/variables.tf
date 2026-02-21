@@ -82,6 +82,36 @@ variable "enable_edge_signed_urls" {
   default     = true
 }
 
+variable "enable_edge_media" {
+  type        = bool
+  description = "Enable optional edge media upload endpoints (/api/edge/media/*)."
+  default     = false
+}
+
+variable "edge_media_gcs_prefix" {
+  type        = string
+  description = "Object prefix used for edge media artifacts in GCS."
+  default     = "media"
+}
+
+variable "edge_media_allowed_exts" {
+  type        = string
+  description = "Comma-separated allowlist for edge media file extensions."
+  default     = ".jpg,.jpeg,.png,.mp4,.webm"
+}
+
+variable "edge_media_signed_url_expires_seconds" {
+  type        = number
+  description = "Signed URL TTL for edge media uploads."
+  default     = 900
+}
+
+variable "edge_media_prefix_retention_days" {
+  type        = number
+  description = "Optional retention for edge media objects by prefix. Set 0 to disable the prefix-specific lifecycle rule."
+  default     = 0
+}
+
 variable "enable_edge_enroll" {
   type        = bool
   description = "Configure EDGE_ENROLL_TOKEN from Secret Manager and enable /api/edge/enroll for fast field provisioning. Recommended when deploying many devices."
@@ -98,6 +128,12 @@ variable "max_instances" {
   type        = number
   description = "Maximum Cloud Run instances (cost guardrail)."
   default     = 1
+}
+
+variable "cloud_sql_instance_connection_name" {
+  type        = string
+  description = "Optional Cloud SQL instance connection name (PROJECT:REGION:INSTANCE). Enables /cloudsql mount in Cloud Run for unix-socket DATABASE_URL values."
+  default     = ""
 }
 
 variable "enable_vpc_connector" {

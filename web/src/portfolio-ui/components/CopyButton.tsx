@@ -5,7 +5,7 @@ export type CopyButtonProps = {
   text: string
   label?: string
   copiedLabel?: string
-  variant?: 'default' | 'outline' | 'secondary' | 'destructive' | 'ghost' | 'link'
+  variant?: 'default' | 'outline' | 'secondary' | 'destructive' | 'ghost'
   size?: 'default' | 'sm' | 'lg' | 'icon'
   className?: string
 }

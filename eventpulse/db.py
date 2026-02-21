@@ -234,6 +234,21 @@ def _migrations() -> List[Tuple[int, str, str]]:
               last_user_agent TEXT
             );
 
+            -- Legacy environments may already have a devices table from older demos.
+            -- Ensure optional columns exist before creating indexes/queries that reference them.
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS label TEXT;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS metadata JSONB;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS token_salt TEXT;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS token_hash TEXT;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS token_iterations INTEGER;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS token_updated_at TIMESTAMPTZ;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ NULL;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ NULL;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen_ip TEXT;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_user_agent TEXT;
+
             CREATE INDEX IF NOT EXISTS idx_devices_last_seen_at
               ON devices(last_seen_at DESC);
 
@@ -292,6 +307,45 @@ def _migrations() -> List[Tuple[int, str, str]]:
                   ADD CONSTRAINT chk_device_media_type_not_empty
                   CHECK (char_length(media_type) > 0);
               END IF;
+            END $$;
+            """,
+        ),
+        (
+            8,
+            "backfill_devices_token_columns",
+            """
+            -- Backward-compatibility patch for environments that applied migration 6
+            -- before token columns were added. These are intentionally nullable to
+            -- avoid failing on legacy rows; new writes populate values explicitly.
+            ALTER TABLE IF EXISTS devices ADD COLUMN IF NOT EXISTS token_salt TEXT;
+            ALTER TABLE IF EXISTS devices ADD COLUMN IF NOT EXISTS token_hash TEXT;
+            ALTER TABLE IF EXISTS devices ADD COLUMN IF NOT EXISTS token_iterations INTEGER;
+            ALTER TABLE IF EXISTS devices ADD COLUMN IF NOT EXISTS token_updated_at TIMESTAMPTZ;
+            ALTER TABLE IF EXISTS devices ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+            ALTER TABLE IF EXISTS devices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+            """,
+        ),
+        (
+            9,
+            "relax_legacy_devices_not_null",
+            """
+            -- Shared/legacy environments may have extra NOT NULL constraints on the
+            -- devices table that this service does not populate. Drop NOT NULL from
+            -- all non-key columns so provisioning and enrollment remain compatible.
+            DO $$
+            DECLARE
+              c RECORD;
+            BEGIN
+              FOR c IN
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema='public'
+                  AND table_name='devices'
+                  AND is_nullable='NO'
+                  AND column_name <> 'device_id'
+              LOOP
+                EXECUTE format('ALTER TABLE devices ALTER COLUMN %I DROP NOT NULL;', c.column_name);
+              END LOOP;
             END $$;
             """,
         ),
@@ -1401,8 +1455,19 @@ def create_device(
                     ),
                 )
             except psycopg2.IntegrityError as exc:
-                # device_id already exists
-                raise ValueError("device already exists") from exc
+                # Keep duplicate-id behavior, but surface other integrity errors
+                # so legacy schema mismatches are diagnosable.
+                if getattr(exc, "pgcode", "") == "23505":
+                    raise ValueError("device already exists") from exc
+                diag = getattr(exc, "diag", None)
+                detail = ""
+                if diag is not None:
+                    detail = str(
+                        diag.message_detail or diag.message_primary or diag.column_name or diag.constraint_name or ""
+                    ).strip()
+                if not detail:
+                    detail = str(exc).strip()
+                raise ValueError(f"device create integrity error: {detail}") from exc
 
             row = cur.fetchone()
             return (dict(row) if row else {"device_id": device_id}), token
@@ -1634,8 +1699,6 @@ def get_device(device_id: str) -> Optional[Dict[str, Any]]:
             return dict(row) if row else None
 
 
-
-
 # -----------------------------
 # Device media (optional)
 # -----------------------------
@@ -1659,19 +1722,19 @@ def create_device_media(
     and supports a simple UI for field ops.
     """
 
-    device_id = str(device_id or '').strip()
+    device_id = str(device_id or "").strip()
     if not device_id:
-        raise ValueError('device_id is required')
+        raise ValueError("device_id is required")
 
-    media_type = str(media_type or '').strip().lower()
+    media_type = str(media_type or "").strip().lower()
     if not media_type:
-        raise ValueError('media_type is required')
+        raise ValueError("media_type is required")
 
-    gcs_bucket = str(gcs_bucket or '').strip()
-    object_name = str(object_name or '').strip()
-    gcs_uri = str(gcs_uri or '').strip()
+    gcs_bucket = str(gcs_bucket or "").strip()
+    object_name = str(object_name or "").strip()
+    gcs_uri = str(gcs_uri or "").strip()
     if not gcs_bucket or not object_name or not gcs_uri:
-        raise ValueError('gcs_bucket/object_name/gcs_uri are required')
+        raise ValueError("gcs_bucket/object_name/gcs_uri are required")
 
     mid = uuid.uuid4()
     now = now_utc()
@@ -1691,7 +1754,7 @@ def create_device_media(
                   content_type, bytes, captured_at, notes, created_at;
                 """,
                 (
-                    mid,
+                    str(mid),
                     device_id,
                     media_type,
                     gcs_bucket,
@@ -1705,24 +1768,28 @@ def create_device_media(
                 ),
             )
             row = cur.fetchone()
-            return dict(row) if row else {
-                'id': str(mid),
-                'device_id': device_id,
-                'media_type': media_type,
-                'gcs_bucket': gcs_bucket,
-                'object_name': object_name,
-                'gcs_uri': gcs_uri,
-                'content_type': content_type,
-                'bytes': bytes,
-                'captured_at': captured_at,
-                'notes': notes,
-                'created_at': now,
-            }
+            return (
+                dict(row)
+                if row
+                else {
+                    "id": str(mid),
+                    "device_id": device_id,
+                    "media_type": media_type,
+                    "gcs_bucket": gcs_bucket,
+                    "object_name": object_name,
+                    "gcs_uri": gcs_uri,
+                    "content_type": content_type,
+                    "bytes": bytes,
+                    "captured_at": captured_at,
+                    "notes": notes,
+                    "created_at": now,
+                }
+            )
 
 
 def list_device_media(*, limit: int = 200, device_id: Optional[str] = None) -> List[Dict[str, Any]]:
     limit = max(1, min(int(limit), 1000))
-    device_id = str(device_id or '').strip() if device_id is not None else None
+    device_id = str(device_id or "").strip() if device_id is not None else None
 
     with get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -1755,7 +1822,7 @@ def list_device_media(*, limit: int = 200, device_id: Optional[str] = None) -> L
 
 
 def get_device_media(media_id: str) -> Optional[Dict[str, Any]]:
-    media_id = str(media_id or '').strip()
+    media_id = str(media_id or "").strip()
     if not media_id:
         return None
 
@@ -1774,6 +1841,8 @@ def get_device_media(media_id: str) -> Optional[Dict[str, Any]]:
             )
             row = cur.fetchone()
             return dict(row) if row else None
+
+
 def verify_device_credentials(
     *,
     device_id: str,

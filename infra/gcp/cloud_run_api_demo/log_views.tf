@@ -63,14 +63,10 @@ resource "google_logging_project_sink" "service_to_bucket" {
   unique_writer_identity = true
 }
 
-# The sink uses a dedicated service account identity; grant it permission to write into buckets.
-resource "google_project_iam_member" "sink_bucket_writer" {
-  count = (var.enable_observability && var.enable_log_views) ? 1 : 0
-
-  project = var.project_id
-  role    = "roles/logging.bucketWriter"
-  member  = google_logging_project_sink.service_to_bucket[0].writer_identity
-}
+# NOTE:
+# For this project-scoped sink -> project log bucket pattern, Logging writes without an
+# extra project IAM binding. Some projects return an empty writer_identity, which makes
+# IAM member creation fail. We intentionally skip an explicit sink writer binding here.
 
 resource "google_logging_log_view" "service_view" {
   count = (var.enable_observability && var.enable_log_views) ? 1 : 0

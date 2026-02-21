@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Tuple
 
 
@@ -60,8 +60,8 @@ class Settings:
     edge_media_signed_url_expires_seconds: int = int(
         os.getenv("EDGE_MEDIA_SIGNED_URL_EXPIRES_SECONDS", os.getenv("SIGNED_URL_EXPIRES_SECONDS", "900"))
     )
-    edge_media_allowed_exts: List[str] = _split_csv(
-        os.getenv("EDGE_MEDIA_ALLOWED_EXTS", ".jpg,.jpeg,.png,.mp4,.webm")
+    edge_media_allowed_exts: List[str] = field(
+        default_factory=lambda: _split_csv(os.getenv("EDGE_MEDIA_ALLOWED_EXTS", ".jpg,.jpeg,.png,.mp4,.webm"))
     )
 
     # Event-driven ingestion from GCS object finalize events (Cloud Run lane)

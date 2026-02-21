@@ -1,11 +1,11 @@
 output "service_url" {
   description = "Cloud Run service URL."
-  value       = module.cloud_run.service_url
+  value       = module.cloud_run.service_uri
 }
 
 output "artifact_repo" {
-  description = "Artifact Registry repository ID."
-  value       = module.artifact_registry.repository_id
+  description = "Artifact Registry Docker repository path."
+  value       = module.artifact_registry.docker_repository
 }
 
 output "runtime_service_account" {
@@ -25,7 +25,7 @@ output "database_url_secret" {
 
 output "monitoring_dashboard_name" {
   description = "Cloud Monitoring dashboard resource name (if enabled)."
-  value       = try(google_monitoring_dashboard.cloudrun[0].name, null)
+  value       = try(google_monitoring_dashboard.cloudrun[0].id, null)
 }
 
 output "alert_policy_5xx_name" {
@@ -35,7 +35,7 @@ output "alert_policy_5xx_name" {
 
 output "alert_policy_latency_name" {
   description = "Alert policy resource name (if enabled)."
-  value       = try(google_monitoring_alert_policy.cloudrun_latency_p95[0].name, null)
+  value       = try(google_monitoring_alert_policy.cloudrun_latency[0].name, null)
 }
 
 output "raw_bucket" {

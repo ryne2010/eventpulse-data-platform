@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ! command -v pnpm >/dev/null 2>&1; then
-  echo "[web_build] pnpm not installed; skipping (corepack enable && pnpm -v)"
-  exit 0
-fi
-
-# In some sandboxed environments, corepack cannot download pnpm from npmjs.
-if ! pnpm -v >/dev/null 2>&1; then
-  echo "[web_build] pnpm is present but cannot run (corepack download blocked); skipping"
+PNPM_CMD=()
+if command -v corepack >/dev/null 2>&1 && corepack pnpm -v >/dev/null 2>&1; then
+  PNPM_CMD=(corepack pnpm)
+elif command -v pnpm >/dev/null 2>&1; then
+  PNPM_CMD=(pnpm)
+else
+  echo "[web_build] pnpm not installed; skipping"
   exit 0
 fi
 
@@ -21,10 +20,10 @@ fi
 # NOTE: running `pnpm -C web install` would treat `web/` as a standalone project
 # and bypass the workspace lockfile.
 if [[ -f "pnpm-lock.yaml" ]]; then
-  pnpm install --frozen-lockfile
+  "${PNPM_CMD[@]}" install --frozen-lockfile
 else
   echo "[web_build] WARNING: pnpm-lock.yaml missing; running non-frozen install"
-  pnpm install
+  "${PNPM_CMD[@]}" install
 fi
 
-pnpm -C web build
+"${PNPM_CMD[@]}" -C web build

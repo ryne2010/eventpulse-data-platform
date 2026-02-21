@@ -28,6 +28,7 @@ Or via Make shortcuts:
 make lint
 make typecheck
 make test
+make web-check
 ```
 
 ### Useful ops
@@ -62,3 +63,4 @@ make deploy-gcp
 - Prefer lockfiles:
   - `uv.lock` is committed
   - `pnpm-lock.yaml` should be committed when working on the UI
+  - `infra/gcp/cloud_run_api_demo/.terraform.lock.hcl` is committed for deterministic provider versions across local + CI

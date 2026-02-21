@@ -8,6 +8,7 @@ locals {
   raw_bucket_name   = "${var.project_id}-eventpulse-raw-${var.env}"
   tasks_queue_name  = "eventpulse-${var.env}"
   raw_bucket_prefix = "raw"
+  edge_media_prefix = trim(var.edge_media_gcs_prefix, "/") != "" ? trim(var.edge_media_gcs_prefix, "/") : "media"
 
   # Runtime configuration for the API.
   # NOTE: DATABASE_URL is provided via Secret Manager (see `module.secrets`).
@@ -24,10 +25,10 @@ locals {
     RAW_GCS_PREFIX  = local.raw_bucket_prefix
 
     # Async ingestion
-    QUEUE_BACKEND        = "cloud_tasks"
-    CLOUD_TASKS_PROJECT  = var.project_id
-    CLOUD_TASKS_LOCATION = var.region
-    CLOUD_TASKS_QUEUE    = local.tasks_queue_name
+    QUEUE_BACKEND                         = "cloud_tasks"
+    CLOUD_TASKS_PROJECT                   = var.project_id
+    CLOUD_TASKS_LOCATION                  = var.region
+    CLOUD_TASKS_QUEUE                     = local.tasks_queue_name
     CLOUD_TASKS_DISPATCH_DEADLINE_SECONDS = "900"
 
     # Internal endpoint auth
@@ -37,10 +38,15 @@ locals {
     TASK_OIDC_SERVICE_ACCOUNT_EMAIL = var.allow_unauthenticated ? "" : module.service_accounts.tasks_invoker_service_account_email
 
     # Public ingest auth (shared secret) for /api/ingest/upload
-    INGEST_AUTH_MODE = lower(var.ingest_auth_mode)
-    EDGE_AUTH_MODE = lower(var.edge_auth_mode)
-    EDGE_ALLOWED_DATASETS = var.edge_allowed_datasets
-    ENABLE_EDGE_SIGNED_URLS = tostring(var.enable_edge_signed_urls)
+    INGEST_AUTH_MODE                      = lower(var.ingest_auth_mode)
+    EDGE_AUTH_MODE                        = lower(var.edge_auth_mode)
+    EDGE_ALLOWED_DATASETS                 = var.edge_allowed_datasets
+    ENABLE_EDGE_SIGNED_URLS               = tostring(var.enable_edge_signed_urls)
+    ENABLE_EDGE_MEDIA                     = tostring(var.enable_edge_media)
+    EDGE_MEDIA_GCS_BUCKET                 = ""
+    EDGE_MEDIA_GCS_PREFIX                 = local.edge_media_prefix
+    EDGE_MEDIA_ALLOWED_EXTS               = var.edge_media_allowed_exts
+    EDGE_MEDIA_SIGNED_URL_EXPIRES_SECONDS = tostring(var.edge_media_signed_url_expires_seconds)
 
     # Processing hardening (reclaimer defaults)
     PROCESSING_TTL_SECONDS = "900"
@@ -51,7 +57,7 @@ locals {
     MAX_FILE_MB = "30"
 
     # Direct-to-GCS signed URLs (recommended only for a private service)
-    ENABLE_SIGNED_URLS        = var.enable_signed_urls ? "true" : "false"
+    ENABLE_SIGNED_URLS         = var.enable_signed_urls ? "true" : "false"
     SIGNED_URL_EXPIRES_SECONDS = tostring(var.signed_url_expires_seconds)
     REQUIRE_SIGNED_URL_SHA256  = "true"
 
@@ -95,7 +101,8 @@ module "artifact_registry" {
 }
 
 # Raw landing zone bucket (immutable-ish).
-resource "google_storage_bucket" "raw" {
+# Reason: default lane prioritizes low-ops setup and uses Google-managed encryption at rest.
+resource "google_storage_bucket" "raw" { #tfsec:ignore:google-storage-bucket-encryption-customer-key
   name                        = local.raw_bucket_name
   project                     = var.project_id
   location                    = var.region
@@ -113,6 +120,19 @@ resource "google_storage_bucket" "raw" {
     }
     condition {
       age = 30 # days
+    }
+  }
+
+  dynamic "lifecycle_rule" {
+    for_each = var.edge_media_prefix_retention_days > 0 ? [1] : []
+    content {
+      action {
+        type = "Delete"
+      }
+      condition {
+        age            = var.edge_media_prefix_retention_days
+        matches_prefix = ["${local.edge_media_prefix}/"]
+      }
     }
   }
 
@@ -139,27 +159,33 @@ module "service_accounts" {
   source     = "../modules/service_accounts"
   project_id = var.project_id
 
-  runtime_account_id   = "sa-eventpulse-runtime-${var.env}"
+  runtime_account_id   = "sa-ep-runtime-${var.env}"
   runtime_display_name = "EventPulse Runtime (${var.env})"
 
-  runtime_roles = [
-    "roles/logging.logWriter",
-    "roles/monitoring.metricWriter",
-    "roles/cloudtrace.agent",
-    # Secret Manager env vars
-    "roles/secretmanager.secretAccessor",
-    # Enqueue Cloud Tasks
-    "roles/cloudtasks.enqueuer",
-  ]
+  runtime_roles = concat(
+    [
+      "roles/logging.logWriter",
+      "roles/monitoring.metricWriter",
+      "roles/cloudtrace.agent",
+      # Secret Manager env vars
+      "roles/secretmanager.secretAccessor",
+      # Enqueue Cloud Tasks
+      "roles/cloudtasks.enqueuer",
+    ],
+    var.cloud_sql_instance_connection_name != "" ? [
+      # Required when DATABASE_URL points to /cloudsql/<INSTANCE_CONNECTION_NAME>.
+      "roles/cloudsql.client",
+    ] : []
+  )
 
-  tasks_invoker_account_id   = "sa-eventpulse-tasks-invoker-${var.env}"
+  tasks_invoker_account_id   = "sa-ep-tasks-invoker-${var.env}"
   tasks_invoker_display_name = "EventPulse Tasks Invoker (${var.env})"
 }
 
 # Bucket-level IAM (least privilege vs project-wide roles/storage.*)
 resource "google_storage_bucket_iam_member" "raw_bucket_object_admin" {
   bucket = google_storage_bucket.raw.name
-  role   = "roles/storage.objectAdmin"
+  role   = "roles/storage.objectUser"
   member = "serviceAccount:${module.service_accounts.runtime_service_account_email}"
 }
 
@@ -229,8 +255,9 @@ module "cloud_run" {
   invoker_service_account_emails = compact([
     module.service_accounts.tasks_invoker_service_account_email
   ])
-  env_vars              = local.env_vars
-  labels                = local.labels
+  env_vars                           = local.env_vars
+  labels                             = local.labels
+  cloud_sql_instance_connection_name = var.cloud_sql_instance_connection_name
 
   # Secret Manager
   secret_env = merge(
@@ -256,15 +283,15 @@ module "cloud_run" {
 # IAM plumbing for OIDC + Signed URLs
 # -----------------------------
 
-data "google_project" "this" {
+data "google_project" "service_agents_project" {
   project_id = var.project_id
 }
 
 locals {
-  gcs_service_agent_email        = "service-${data.google_project.this.number}@gs-project-accounts.iam.gserviceaccount.com"
-  pubsub_service_agent_email     = "service-${data.google_project.this.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
-  cloudtasks_service_agent_email = "service-${data.google_project.this.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
-  cloudscheduler_service_agent_email = "service-${data.google_project.this.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+  gcs_service_agent_email            = "service-${data.google_project.service_agents_project.number}@gs-project-accounts.iam.gserviceaccount.com"
+  pubsub_service_agent_email         = "service-${data.google_project.service_agents_project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+  cloudtasks_service_agent_email     = "service-${data.google_project.service_agents_project.number}@gcp-sa-cloudtasks.iam.gserviceaccount.com"
+  cloudscheduler_service_agent_email = "service-${data.google_project.service_agents_project.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
 }
 
 # Allow Cloud Tasks service agent to mint OIDC tokens for the invoker SA.

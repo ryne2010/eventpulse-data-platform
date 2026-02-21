@@ -7,6 +7,16 @@ DEVICE_TOKEN=${DEVICE_TOKEN:?Set DEVICE_TOKEN}
 
 OUT=${OUT:-/tmp/eventpulse_snapshot.jpg}
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "Missing dependency: jq (install with: sudo apt-get install -y jq)" >&2
+  exit 1
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "Missing dependency: curl (install with: sudo apt-get install -y curl)" >&2
+  exit 1
+fi
+
 # Choose a default capture command based on what's installed.
 if [[ -z "${CAPTURE_CMD:-}" ]]; then
   if command -v libcamera-still >/dev/null 2>&1; then
