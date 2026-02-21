@@ -12,6 +12,15 @@ This folder contains a small helper script to capture a snapshot (USB webcam via
 - `curl`
 - `jq`
 
+Example install commands:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y jq curl fswebcam
+# For Pi camera module support instead of USB webcam:
+# sudo apt-get install -y libcamera-apps
+```
+
 ## Env vars
 
 ```bash

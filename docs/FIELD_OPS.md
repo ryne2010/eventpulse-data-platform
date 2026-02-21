@@ -122,6 +122,26 @@ On an **M2 Max** (arm64), the built image is natively compatible with **Pi OS 64
 By default, `make edge-image-build` targets **linux/arm64** (see `EDGE_IMAGE_PLATFORM` in the Makefile).
 If you build on an x86_64 machine, you'll need Docker Buildx/QEMU to cross-build.
 
+Explicit platform examples:
+
+```bash
+# Pi OS 64-bit
+make edge-image-build EDGE_IMAGE_PLATFORM=linux/arm64
+
+# x86 Linux edge host
+make edge-image-build EDGE_IMAGE_PLATFORM=linux/amd64
+```
+
+For a single multi-arch tag (registry push):
+
+```bash
+docker buildx build \
+  --platform linux/arm64,linux/amd64 \
+  -t REGISTRY/REPO/eventpulse-edge-agent:TAG \
+  -f services/edge_agent/Dockerfile \
+  --push .
+```
+
 ### Option A: no registry (fast + cheap)
 
 Build + export:
@@ -327,6 +347,66 @@ The SPA includes a **Media** page for operators. Because media can be sensitive,
 `/internal/admin/media/*` endpoints (requires internal auth / task token or Cloud Run IAM).
 
 Tip for cost control: configure a GCS lifecycle rule to delete `media/` objects after N days.
+
+### Minimal end-to-end validation (Cloud Run + real GCS)
+
+Run this after enabling `ENABLE_EDGE_MEDIA=true` and device auth:
+
+```bash
+# 1) Mint a signed PUT URL
+SIGNED=$(curl -sS -X POST "$API_BASE/api/edge/media/signed_url" \
+  -H "X-Device-Id: $DEVICE_ID" \
+  -H "X-Device-Token: $DEVICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"filename":"snapshot.jpg","content_type":"image/jpeg"}')
+
+UPLOAD_URL=$(echo "$SIGNED" | jq -r '.upload_url')
+GCS_URI=$(echo "$SIGNED" | jq -r '.gcs_uri')
+echo "$SIGNED" | jq '.required_headers'
+
+# 2) Create a tiny JPEG (portable across macOS/Linux)
+python - <<'PY'
+import base64
+open("/tmp/eventpulse_media_e2e.jpg","wb").write(base64.b64decode(
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxISEhUQEhIVFhUVFRUVFRUVFRUVFRUWFxUVFRUYHSggGBolHRUVITEhJSkrLi4uFx8zODMtNygtLisBCgoKDg0OGhAQGi0fHR8tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAAEAAQMBEQACEQEDEQH/xAAWAAEBAQAAAAAAAAAAAAAAAAABAgP/xAAVEQEBAAAAAAAAAAAAAAAAAAABAP/aAAwDAQACEAMQAAAByA//xAAUEQEAAAAAAAAAAAAAAAAAAAAg/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAg/9oACAEDAQE/AYf/xAAUEQEAAAAAAAAAAAAAAAAAAAAg/9oACAECAQE/AYf/xAAUEAEAAAAAAAAAAAAAAAAAAAAg/9oACAEBAAY/Aqf/xAAUEAEAAAAAAAAAAAAAAAAAAAAg/9oACAEBAAE/IV//2Q=="
+))
+PY
+
+# 3) Upload with the exact required headers
+CTYPE=$(echo "$SIGNED" | jq -r '.required_headers["content-type"]')
+META_DEVICE=$(echo "$SIGNED" | jq -r '.required_headers["x-goog-meta-device-id"]')
+META_TYPE=$(echo "$SIGNED" | jq -r '.required_headers["x-goog-meta-media-type"]')
+META_ORIG=$(echo "$SIGNED" | jq -r '.required_headers["x-goog-meta-original-filename"]')
+
+curl -sS -X PUT "$UPLOAD_URL" \
+  -H "content-type: $CTYPE" \
+  -H "x-goog-meta-device-id: $META_DEVICE" \
+  -H "x-goog-meta-media-type: $META_TYPE" \
+  -H "x-goog-meta-original-filename: $META_ORIG" \
+  --data-binary @/tmp/eventpulse_media_e2e.jpg >/dev/null
+
+# 4) Finalize
+curl -sS -X POST "$API_BASE/api/edge/media/finalize" \
+  -H "X-Device-Id: $DEVICE_ID" \
+  -H "X-Device-Token: $DEVICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"gcs_uri":"'"$GCS_URI"'","media_type":"image","content_type":"image/jpeg"}' | jq .
+```
+
+Then validate internal media access:
+
+- `TASK_AUTH_MODE=token`:
+  - `GET /internal/admin/media` without `X-Task-Token` must fail (`403`).
+  - with `X-Task-Token: $TASK_TOKEN` must succeed (`200`).
+- `TASK_AUTH_MODE=iam`:
+  - internal media endpoints remain hidden from OpenAPI (`/openapi.json` does not include `/internal/admin/media*`).
+  - access control is enforced by Cloud Run IAM (`allow_unauthenticated=false`).
+
+To validate Media page "Open":
+
+1. Use the UI Media page to list rows (or call `GET /internal/admin/media` with internal auth).
+2. Request a read URL with `POST /internal/admin/media/gcs_read_signed_url`.
+3. Open the returned `download_url` and confirm the object renders/downloads.
 
 
 ## Operations

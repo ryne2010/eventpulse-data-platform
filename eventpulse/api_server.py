@@ -8,6 +8,7 @@ import secrets
 import shutil
 import tempfile
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -16,6 +17,7 @@ import pandas as pd
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
 from .config import normalize_edge_auth_mode, normalize_ingest_auth_mode, normalize_task_auth_mode, settings
@@ -93,21 +95,51 @@ class SPAStaticFiles(StaticFiles):
         if first in {"api", "internal"}:
             return await super().get_response(path, scope)
 
-        response = await super().get_response(path, scope)
-
         # If the request looks like a file (has an extension), keep the 404.
         last = normalized.split("/")[-1] if normalized else ""
-        if response.status_code == 404 and last and "." not in last:
-            return await super().get_response("index.html", scope)
-
-        return response
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404 and last and "." not in last:
+                return await super().get_response("index.html", scope)
+            raise
 
 
 setup_logging(log_level=settings.log_level, log_format=settings.log_format)
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="EventPulse Data Platform", version=__version__)
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """App lifecycle hook for startup checks and DB initialization."""
+
+    init_db()
+
+    mode = normalize_task_auth_mode(settings.task_auth_mode)
+    if mode == "iam" and not settings.task_token:
+        logger.warning(
+            "TASK_AUTH_MODE=iam with no TASK_TOKEN; ensure Cloud Run requires authentication (no unauth) or internal endpoints may be exposed",
+            extra={"task_auth_mode": mode},
+        )
+
+    if settings.enable_signed_urls and mode != "iam" and not settings.task_token:
+        logger.warning(
+            "ENABLE_SIGNED_URLS=true but internal auth is not enabled; signed URL minting should be protected (TASK_AUTH_MODE=iam or TASK_TOKEN)",
+            extra={"task_auth_mode": mode},
+        )
+
+    if settings.enable_gcs_event_ingestion:
+        if mode != "iam" or settings.task_token:
+            logger.warning(
+                "ENABLE_GCS_EVENT_INGESTION=true requires TASK_AUTH_MODE=iam with TASK_TOKEN unset (Pub/Sub push cannot send X-Task-Token)",
+                extra={"task_auth_mode": mode},
+            )
+
+    yield
+
+
+app = FastAPI(title="EventPulse Data Platform", version=__version__, lifespan=_lifespan)
 app.middleware("http")(request_context_middleware)
 
 
@@ -190,31 +222,6 @@ async def _security_headers(request: Request, call_next):
     return response
 
 
-@app.on_event("startup")
-def _startup() -> None:
-    init_db()
-
-    mode = normalize_task_auth_mode(settings.task_auth_mode)
-    if mode == "iam" and not settings.task_token:
-        logger.warning(
-            "TASK_AUTH_MODE=iam with no TASK_TOKEN; ensure Cloud Run requires authentication (no unauth) or internal endpoints may be exposed",
-            extra={"task_auth_mode": mode},
-        )
-
-    if settings.enable_signed_urls and mode != "iam" and not settings.task_token:
-        logger.warning(
-            "ENABLE_SIGNED_URLS=true but internal auth is not enabled; signed URL minting should be protected (TASK_AUTH_MODE=iam or TASK_TOKEN)",
-            extra={"task_auth_mode": mode},
-        )
-
-    if settings.enable_gcs_event_ingestion:
-        if mode != "iam" or settings.task_token:
-            logger.warning(
-                "ENABLE_GCS_EVENT_INGESTION=true requires TASK_AUTH_MODE=iam with TASK_TOKEN unset (Pub/Sub push cannot send X-Task-Token)",
-                extra={"task_auth_mode": mode},
-            )
-
-
 # -----------------------------
 # Health
 # -----------------------------
@@ -223,6 +230,12 @@ def _startup() -> None:
 @app.get("/healthz")
 def healthz() -> Dict[str, Any]:
     return {"ok": True, "version": __version__}
+
+
+# API-prefixed health alias (useful for managed probes / shared ingress rules).
+@app.get("/api/healthz")
+def api_healthz() -> Dict[str, Any]:
+    return healthz()
 
 
 # Common default used by Makefile + CI
@@ -980,8 +993,6 @@ def edge_gcs_signed_url(request: Request, payload: Dict[str, Any] = Body(...)) -
     )
 
 
-
-
 @app.post("/api/edge/media/signed_url")
 def edge_media_signed_url(request: Request, payload: Dict[str, Any] = Body(...)) -> JSONResponse:
     """Return a signed URL for an edge device to upload media (photo/video) to GCS.
@@ -1024,7 +1035,9 @@ def edge_media_signed_url(request: Request, payload: Dict[str, Any] = Body(...))
     if media_type not in {"image", "video"}:
         raise HTTPException(status_code=400, detail="media_type must be 'image' or 'video'")
 
-    content_type = str(payload.get("content_type") or payload.get("contentType") or "application/octet-stream").strip()[:200]
+    content_type = str(payload.get("content_type") or payload.get("contentType") or "application/octet-stream").strip()[
+        :200
+    ]
     expires = int(payload.get("expires_in_seconds") or settings.edge_media_signed_url_expires_seconds)
     expires = max(60, min(expires, 3600))
 
@@ -1083,7 +1096,7 @@ def edge_media_signed_url(request: Request, payload: Dict[str, Any] = Body(...))
 
 
 @app.post("/api/edge/media/finalize")
-def edge_media_finalize(request: Request, payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+def edge_media_finalize(request: Request, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Finalize an edge media upload by recording metadata in Postgres.
 
     This enables the SPA to list and preview media artifacts for field ops.
@@ -1169,7 +1182,10 @@ def edge_media_finalize(request: Request, payload: Dict[str, Any] = Body(...)) -
     except Exception as e:
         logger.warning("audit insert failed", extra={"error": str(e), "gcs_uri": gcs_uri})
 
-    return JSONResponse(status_code=200, content={"ok": True, "item": record})
+    # Return a plain dict so FastAPI's encoder handles UUID/datetime values.
+    return {"ok": True, "item": record}
+
+
 @app.post("/api/edge/ingest/from_gcs")
 def edge_ingest_from_gcs(request: Request, payload: Dict[str, Any] = Body(...)) -> JSONResponse:
     """Finalize an edge upload by registering an ingestion for a raw GCS object."""
@@ -1600,22 +1616,22 @@ def _actor_from_request(request: Request) -> Optional[str]:
     return None
 
 
-
-
 def _parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
-    uri = str(gcs_uri or '').strip()
-    if not uri.startswith('gs://'):
-        raise ValueError('gcs_uri must start with gs://')
+    uri = str(gcs_uri or "").strip()
+    if not uri.startswith("gs://"):
+        raise ValueError("gcs_uri must start with gs://")
 
     rest = uri[5:]
-    parts = rest.split('/', 1)
+    parts = rest.split("/", 1)
     if len(parts) != 2:
-        raise ValueError('gcs_uri must be in form gs://<bucket>/<object>')
+        raise ValueError("gcs_uri must be in form gs://<bucket>/<object>")
     bucket = parts[0].strip()
-    obj = parts[1].lstrip('/')
+    obj = parts[1].lstrip("/")
     if not bucket or not obj:
-        raise ValueError('gcs_uri must include bucket and object name')
+        raise ValueError("gcs_uri must include bucket and object name")
     return bucket, obj
+
+
 def _unwrap_pubsub_push(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Unwrap Pub/Sub push envelope to the embedded event JSON."""
 
@@ -1895,6 +1911,8 @@ def internal_media_read_signed_url(request: Request, payload: Dict[str, Any] = B
     )
 
     return JSONResponse(status_code=200, content={"ok": True, "download_url": url, "expires_in_seconds": expires})
+
+
 # Internal admin: device registry (edge auth)
 # -----------------------------
 
@@ -1987,7 +2005,10 @@ def internal_create_device(request: Request, payload: Dict[str, Any] = Body(...)
     try:
         device, token = create_device(device_id=device_id, label=label, metadata=metadata)
     except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        msg = str(e)
+        if "already exists" in msg:
+            raise HTTPException(status_code=409, detail=msg)
+        raise HTTPException(status_code=500, detail=msg)
 
     # Best-effort audit trail (does not block provisioning)
     try:

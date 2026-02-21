@@ -247,31 +247,32 @@ export function DevicesPage() {
     refetchInterval: 15_000,
   })
 
-  const rows = (devicesQ.data ?? []).map((rr) => ({
-    ...rr,
-    event_count: Number((rr as any).event_count ?? 0),
-    is_offline: Boolean((rr as any).is_offline),
-    label: (rr as any).label ?? null,
-    last_seen_at: (rr as any).last_seen_at ?? null,
-    last_seen_ip: (rr as any).last_seen_ip ?? null,
-    revoked_at: (rr as any).revoked_at ?? null,
-    alert_count: Number((rr as any).alert_count ?? 0),
-    alert_severity: (rr as any).alert_severity ?? null,
-    alerts: (rr as any).alerts ?? null,
+  const rows: DeviceStatusRow[] = (devicesQ.data ?? []).map((rr: any) => ({
+    device_id: String(rr.device_id ?? ''),
+    label: rr.label ?? null,
+    last_seen_at: rr.last_seen_at ?? null,
+    last_seen_ip: rr.last_seen_ip ?? null,
+    revoked_at: rr.revoked_at ?? null,
+    event_count: Number(rr.event_count ?? 0),
+    last_event_ts: rr.last_event_ts ?? null,
+    last_loaded_at: rr.last_loaded_at ?? null,
+    alert_count: Number(rr.alert_count ?? 0),
+    alert_severity: rr.alert_severity ?? null,
+    alerts: rr.alerts ?? null,
+    is_offline: Boolean(rr.is_offline),
   }))
 
-  const alertRows = (alertsQ.data ?? []).map((rr) => ({
-    ...rr,
-    device_id: String((rr as any).device_id ?? ''),
-    sensor: String((rr as any).sensor ?? ''),
-    value: Number((rr as any).value ?? 0),
-    units: (rr as any).units ?? null,
-    ts: (rr as any).ts ?? null,
-    severity_num: Number((rr as any).severity_num ?? 0),
-    severity: (rr as any).severity ?? null,
-    alert_type: (rr as any).alert_type ?? null,
-    label: (rr as any).label ?? null,
-    revoked_at: (rr as any).revoked_at ?? null,
+  const alertRows: DeviceAlertRow[] = (alertsQ.data ?? []).map((rr: any) => ({
+    device_id: String(rr.device_id ?? ''),
+    label: rr.label ?? null,
+    revoked_at: rr.revoked_at ?? null,
+    sensor: String(rr.sensor ?? ''),
+    value: Number(rr.value ?? 0),
+    units: rr.units ?? null,
+    ts: rr.ts ?? null,
+    severity_num: Number(rr.severity_num ?? 0),
+    severity: rr.severity ?? null,
+    alert_type: rr.alert_type ?? null,
   }))
 
   const registryDevices = (registryQ.data?.devices ?? []) as DeviceInfo[]
@@ -666,7 +667,7 @@ ${edgeEnvSnippet(device_id, res.device_token)}`)
               ) : null}
 
               {rows.length ? (
-                <DataTable
+                <DataTable<DeviceStatusRow>
                   data={rows}
                   columns={cols}
                   height={560}
@@ -759,7 +760,7 @@ ${edgeEnvSnippet(device_id, res.device_token)}`)
               ) : null}
 
               {filteredAlerts.length ? (
-                <DataTable
+                <DataTable<DeviceAlertRow>
                   data={filteredAlerts}
                   columns={alertCols}
                   height={560}

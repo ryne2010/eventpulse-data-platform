@@ -113,3 +113,9 @@ variable "labels" {
   description = "Labels for the service."
   default     = {}
 }
+
+variable "cloud_sql_instance_connection_name" {
+  type        = string
+  description = "Optional Cloud SQL instance connection name (PROJECT:REGION:INSTANCE). When set, mounts /cloudsql in the container."
+  default     = ""
+}

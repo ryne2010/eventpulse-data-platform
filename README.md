@@ -45,7 +45,8 @@ Optional: set `TASK_TOKEN` in `.env` to enable internal endpoints (signed upload
 Open:
 
 - UI: `http://localhost:8081`
-- API health: `http://localhost:8081/health`
+- API health: `http://localhost:8081/health` (alias: `/api/healthz`)
+- API runtime meta: `http://localhost:8081/api/meta`
 
 In the UI, use the top nav:
 

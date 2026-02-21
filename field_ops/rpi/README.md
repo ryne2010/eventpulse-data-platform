@@ -51,6 +51,28 @@ gunzip -c /tmp/eventpulse-edge-agent_latest.tar.gz | docker load
 sudo systemctl restart eventpulse-edge-agent
 ```
 
+## Multi-arch image builds (M2 + x86)
+
+From the repo root:
+
+```bash
+# Native for Raspberry Pi OS 64-bit (recommended on M2 Macs)
+make edge-image-build EDGE_IMAGE_PLATFORM=linux/arm64
+
+# Cross-build for x86 Linux edge hosts
+make edge-image-build EDGE_IMAGE_PLATFORM=linux/amd64
+```
+
+For one tag that supports both platforms, use Docker Buildx directly:
+
+```bash
+docker buildx build \
+  --platform linux/arm64,linux/amd64 \
+  -t YOUR_REGISTRY/eventpulse-edge-agent:TAG \
+  -f services/edge_agent/Dockerfile \
+  --push .
+```
+
 ## Optional: camera snapshots
 
 If you attach a USB webcam or Pi camera and you enabled `ENABLE_EDGE_MEDIA=true` on the API,

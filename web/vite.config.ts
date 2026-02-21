@@ -16,4 +16,16 @@ export default defineConfig({
       '/healthz': { target, changeOrigin: true },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('/react-dom/') || id.includes('/react/')) return 'vendor-react'
+          if (id.includes('/@tanstack/')) return 'vendor-tanstack'
+          return undefined
+        },
+      },
+    },
+  },
 })

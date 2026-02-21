@@ -10,7 +10,12 @@ if [[ ! -d web ]]; then
   exit 0
 fi
 
-if ! command -v pnpm >/dev/null 2>&1; then
+PNPM_CMD=()
+if command -v corepack >/dev/null 2>&1 && corepack pnpm -v >/dev/null 2>&1; then
+  PNPM_CMD=(corepack pnpm)
+elif command -v pnpm >/dev/null 2>&1; then
+  PNPM_CMD=(pnpm)
+else
   echo "pnpm not found; skipping web lint" >&2
   exit 0
 fi
@@ -20,4 +25,4 @@ if [[ ! -d web/node_modules ]]; then
   exit 0
 fi
 
-(cd web && pnpm lint)
+(cd web && "${PNPM_CMD[@]}" lint)

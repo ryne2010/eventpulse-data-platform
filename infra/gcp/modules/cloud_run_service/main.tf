@@ -11,7 +11,7 @@ resource "google_cloud_run_v2_service" "service" {
 
     # Cloud Run instance-level settings
     max_instance_request_concurrency = var.concurrency
-    timeout                         = var.timeout
+    timeout                          = var.timeout
 
     scaling {
       min_instance_count = var.min_instances
@@ -52,6 +52,24 @@ resource "google_cloud_run_v2_service" "service" {
           }
         }
       }
+
+      dynamic "volume_mounts" {
+        for_each = var.cloud_sql_instance_connection_name == "" ? [] : [1]
+        content {
+          name       = "cloudsql"
+          mount_path = "/cloudsql"
+        }
+      }
+    }
+
+    dynamic "volumes" {
+      for_each = var.cloud_sql_instance_connection_name == "" ? [] : [var.cloud_sql_instance_connection_name]
+      content {
+        name = "cloudsql"
+        cloud_sql_instance {
+          instances = [volumes.value]
+        }
+      }
     }
 
     dynamic "vpc_access" {
@@ -82,7 +100,7 @@ resource "google_cloud_run_v2_service_iam_member" "invoker_all_users" {
 
 
 resource "google_cloud_run_v2_service_iam_member" "invoker_service_accounts" {
-  for_each = toset([for e in var.invoker_service_account_emails : e if e != ""]) 
+  for_each = toset([for e in var.invoker_service_account_emails : e if e != ""])
 
   project  = var.project_id
   location = var.region

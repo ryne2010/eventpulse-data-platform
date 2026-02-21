@@ -80,10 +80,10 @@ endef
 
 .PHONY: help init auth \
 	doctor doctor-gcp \
-	up down reset clean clean-py clean-web logs watch \
+	up down reset clean clean-py clean-web clean-terraform logs watch \
 	gen ingest list sample \
 	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp build-gcp deploy-gcp url-gcp verify-gcp logs-gcp destroy-gcp \
-	db-secret edge-enroll-token-secret edge-image-build edge-image-export edge-image-load edge-image-push lock
+	db-secret edge-enroll-token-secret edge-image-build edge-image-export edge-image-load edge-image-push lock web-check
 
 help:
 	@echo "Local targets:"
@@ -92,7 +92,7 @@ help:
 	@echo "  up               Start local stack (Postgres + API + worker + UI)"
 	@echo "  down             Stop local stack"
 	@echo "  reset            Remove volumes + reset local data directories"
-	@echo "  clean            Remove local build artifacts (.venv, caches, node_modules, dist)"
+	@echo "  clean            Remove local build artifacts (.venv, caches, node_modules, dist, terraform workdirs)"
 	@echo "  logs             Tail local logs"
 	@echo "  watch            Start the watcher (monitors data/incoming)"
 	@echo "  gen              Generate sample incoming files"
@@ -107,7 +107,7 @@ help:
 	@echo "  plan-gcp         Terraform plan"
 	@echo "  apply-gcp        Terraform apply"
 	@echo "  url-gcp          Print service URL"
-	@echo "  verify-gcp       Hit /health"
+	@echo "  verify-gcp       Hit /api/healthz + /api/meta + /readyz"
 	@echo "  logs-gcp         Read Cloud Run logs"
 	@echo "  destroy-gcp      Terraform destroy (keeps tfstate bucket)"
 	@echo "  db-secret           Add a DATABASE_URL secret version (reads from stdin)"
@@ -122,13 +122,14 @@ help:
 	@echo "  edge-image-push    Push the edge-agent image to Artifact Registry (optional)"
 	@echo ""
 	@echo "Reproducibility:"
-	@echo "  lock             Generate uv.lock + pnpm-lock.yaml locally"
+	@echo "  lock             Generate uv.lock + pnpm-lock.yaml + Terraform provider lockfile"
 	@echo ""
 	@echo "Repo quality gates (harness):"
 	@echo "  fmt              Format (ruff + terraform fmt via pre-commit)"
 	@echo "  lint             Lint (ruff + terraform fmt check via pre-commit)"
 	@echo "  typecheck        Typecheck (pyright + mypy where configured)"
 	@echo "  test             Run tests (pytest)"
+	@echo "  web-check        Run web lint + typecheck + build"
 	@echo "  harness-doctor    Explain what the harness will run"
 
 
@@ -341,7 +342,7 @@ reset:
 	mkdir -p data/pg data/raw data/archive data/incoming data/contracts
 	chmod -R a+rwX data/raw data/archive data/incoming data/contracts
 
-clean: clean-py clean-web ## Remove local build artifacts/caches
+clean: clean-py clean-web clean-terraform ## Remove local build artifacts/caches
 	@echo "Cleaned local artifacts."
 
 clean-py: ## Remove Python venv + caches
@@ -352,6 +353,9 @@ clean-py: ## Remove Python venv + caches
 
 clean-web: ## Remove Node artifacts
 	rm -rf node_modules web/node_modules web/dist
+
+clean-terraform: ## Remove local Terraform working artifacts (keeps provider lockfile)
+	rm -rf infra/gcp/cloud_run_api_demo/.terraform
 
 logs:
 	$(COMPOSE) logs -f --tail=200
@@ -483,6 +487,8 @@ check-secrets-gcp: doctor-gcp infra-gcp
 	ALLOW_UNAUTH="$${TF_VAR_allow_unauthenticated:-true}"; \
 	INGEST_MODE="$${TF_VAR_ingest_auth_mode:-none}"; \
 	EDGE_ENROLL="$${TF_VAR_enable_edge_enroll:-false}"; \
+	INGEST_MODE_LC=$$(printf '%s' "$$INGEST_MODE" | tr '[:upper:]' '[:lower:]'); \
+	EDGE_ENROLL_LC=$$(printf '%s' "$$EDGE_ENROLL" | tr '[:upper:]' '[:lower:]'); \
 	echo "Checking required Secret Manager versions..."; \
 	missing=0; \
 	check_secret() { \
@@ -505,12 +511,12 @@ check-secrets-gcp: doctor-gcp infra-gcp
 	else \
 		echo "  ✓ TASK_TOKEN not required (allow_unauthenticated=false / IAM mode)"; \
 	fi; \
-	if [ "$${INGEST_MODE,,}" = "token" ]; then \
+	if [ "$$INGEST_MODE_LC" = "token" ]; then \
 		check_secret eventpulse-ingest-token INGEST_TOKEN "make ingest-token-secret"; \
 	else \
 		echo "  ✓ INGEST_TOKEN not required (INGEST_AUTH_MODE!=token)"; \
 	fi; \
-	if [ "$${EDGE_ENROLL,,}" = "true" ]; then \
+	if [ "$$EDGE_ENROLL_LC" = "true" ]; then \
 		check_secret eventpulse-edge-enroll-token EDGE_ENROLL_TOKEN "make edge-enroll-token-secret"; \
 	else \
 		echo "  ✓ EDGE_ENROLL_TOKEN not required (enable_edge_enroll=false)"; \
@@ -551,10 +557,14 @@ apply-gcp: tf-init-gcp
 # Ensure Cloud Build can push to Artifact Registry.
 grant-cloudbuild-gcp: doctor-gcp
 	@PROJECT_NUMBER=$$(gcloud projects describe "$(PROJECT_ID)" --format='value(projectNumber)'); \
-	echo "Granting Cloud Build writer on Artifact Registry (project $$PROJECT_NUMBER)"; \
-	gcloud projects add-iam-policy-binding "$(PROJECT_ID)" \
+	echo "Granting Cloud Build writer on Artifact Registry repo $(AR_REPO) (project $$PROJECT_NUMBER)"; \
+	gcloud artifacts repositories add-iam-policy-binding "$(AR_REPO)" \
+	  --location "$(REGION)" \
+	  --project "$(PROJECT_ID)" \
 	  --member="serviceAccount:$${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-	  --role="roles/artifactregistry.writer" >/dev/null
+	  --role="roles/artifactregistry.writer" \
+	  --condition=None \
+	  --quiet >/dev/null
 
 # Build+push using Cloud Build.
 # This uses the repo root Dockerfile (Cloud Run deploy lane).
@@ -578,7 +588,8 @@ url-gcp: tf-init-gcp
 verify-gcp: tf-init-gcp
 	@URL=$$(terraform -chdir=$(TF_DIR) output -raw service_url); \
 	echo "Service URL: $$URL"; \
-	curl -fsS "$$URL/health" >/dev/null && echo "OK: /health" || (echo "Health check failed"; exit 1); \
+	curl -fsS "$$URL/api/healthz" >/dev/null && echo "OK: /api/healthz" || (echo "Health check failed"; exit 1); \
+	curl -fsS "$$URL/api/meta" >/dev/null && echo "OK: /api/meta" || (echo "Meta check failed"; exit 1); \
 	curl -fsS "$$URL/readyz" >/dev/null && echo "OK: /readyz" || (echo "Readiness check failed"; exit 1)
 logs-gcp: doctor-gcp
 	gcloud run services logs read "$(SERVICE_NAME)" --region "$(REGION)" --limit 100
@@ -684,7 +695,17 @@ lock: doctor
 	@echo "Generating pnpm-lock.yaml (workspace)"
 	corepack enable
 	pnpm install
-	@echo "Done. Commit uv.lock and pnpm-lock.yaml for team reproducibility."
+	@echo "Refreshing Terraform provider lockfile ($(TF_DIR)/.terraform.lock.hcl)"
+	@if command -v terraform >/dev/null 2>&1; then \
+		terraform -chdir=$(TF_DIR) init -backend=false -upgrade >/dev/null; \
+		terraform -chdir=$(TF_DIR) providers lock \
+			-platform=darwin_arm64 \
+			-platform=linux_amd64 \
+			-platform=linux_arm64 >/dev/null; \
+	else \
+		echo "terraform not found; skipping provider lockfile refresh" >&2; \
+	fi
+	@echo "Done. Commit uv.lock, pnpm-lock.yaml, and $(TF_DIR)/.terraform.lock.hcl for team reproducibility."
 
 
 # -----------------------------------------------------------------------------
@@ -758,7 +779,7 @@ tf-check: tf-fmt tf-validate tf-lint tf-sec tf-policy ## Run all Terraform hygie
 # Repo quality gates (harness)
 # -----------------------------------------------------------------------------
 
-.PHONY: fmt lint typecheck test build harness-doctor
+.PHONY: fmt lint typecheck test build harness-doctor web-check
 
 fmt: ## Format repo (ruff + terraform fmt via pre-commit)
 	@python scripts/harness.py fmt
@@ -774,6 +795,11 @@ test: ## Run tests (pytest)
 
 build: ## Build (frontend build if configured)
 	@python scripts/harness.py build
+
+web-check: ## Run web lint + typecheck + build
+	@bash scripts/web_lint.sh
+	@bash scripts/web_typecheck.sh
+	@bash scripts/web_build.sh
 
 harness-doctor: ## Explain what the harness will run
 	@python scripts/harness.py doctor
