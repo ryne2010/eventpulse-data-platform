@@ -605,7 +605,7 @@ def list_ingestions(
         if s == "success":
             where.append("i.status='LOADED'")
         elif s == "failed":
-            where.append("i.status LIKE 'FAILED%'")
+            where.append("i.status LIKE 'FAILED%%'")
         elif s == "processing":
             where.append("i.status='PROCESSING'")
         elif s == "received":
@@ -885,7 +885,7 @@ CASE
   WHEN status='RECEIVED' THEN 'received'
   WHEN status='PROCESSING' THEN 'processing'
   WHEN status='LOADED' THEN 'success'
-  WHEN status LIKE 'FAILED%' THEN 'failed'
+  WHEN status LIKE 'FAILED%%' THEN 'failed'
   ELSE lower(status)
 END
 """
@@ -912,7 +912,7 @@ def list_dataset_summaries(limit: int = 50) -> List[Dict[str, Any]]:
                   SUM(CASE WHEN status='RECEIVED' THEN 1 ELSE 0 END) AS received_count,
                   SUM(CASE WHEN status='PROCESSING' THEN 1 ELSE 0 END) AS processing_count,
                   SUM(CASE WHEN status='LOADED' THEN 1 ELSE 0 END) AS success_count,
-                  SUM(CASE WHEN status LIKE 'FAILED%' THEN 1 ELSE 0 END) AS failed_count
+                  SUM(CASE WHEN status LIKE 'FAILED%%' THEN 1 ELSE 0 END) AS failed_count
                 FROM ingestions
                 GROUP BY dataset
                 ORDER BY MAX(received_at) DESC NULLS LAST
@@ -1258,7 +1258,7 @@ def prune_ingestions(*, older_than_days: int, limit: int = 5_000, dry_run: bool 
                 """
                 SELECT COUNT(*)::BIGINT AS count
                 FROM ingestions
-                WHERE (status='LOADED' OR status LIKE 'FAILED%')
+                WHERE (status='LOADED' OR status LIKE 'FAILED%%')
                   AND processed_at IS NOT NULL
                   AND processed_at < %s
                 """,
@@ -1275,7 +1275,7 @@ def prune_ingestions(*, older_than_days: int, limit: int = 5_000, dry_run: bool 
                     WITH del AS (
                       SELECT id
                       FROM ingestions
-                      WHERE (status='LOADED' OR status LIKE 'FAILED%')
+                      WHERE (status='LOADED' OR status LIKE 'FAILED%%')
                         AND processed_at IS NOT NULL
                         AND processed_at < %s
                       ORDER BY processed_at ASC
