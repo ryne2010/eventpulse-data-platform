@@ -8,7 +8,6 @@ locals {
   raw_bucket_name   = "${var.project_id}-eventpulse-raw-${var.env}"
   tasks_queue_name  = "eventpulse-${var.env}"
   raw_bucket_prefix = "raw"
-  edge_media_prefix = trim(var.edge_media_gcs_prefix, "/") != "" ? trim(var.edge_media_gcs_prefix, "/") : "media"
 
   # Runtime configuration for the API.
   # NOTE: DATABASE_URL is provided via Secret Manager (see `module.secrets`).
@@ -38,15 +37,7 @@ locals {
     TASK_OIDC_SERVICE_ACCOUNT_EMAIL = var.allow_unauthenticated ? "" : module.service_accounts.tasks_invoker_service_account_email
 
     # Public ingest auth (shared secret) for /api/ingest/upload
-    INGEST_AUTH_MODE                      = lower(var.ingest_auth_mode)
-    EDGE_AUTH_MODE                        = lower(var.edge_auth_mode)
-    EDGE_ALLOWED_DATASETS                 = var.edge_allowed_datasets
-    ENABLE_EDGE_SIGNED_URLS               = tostring(var.enable_edge_signed_urls)
-    ENABLE_EDGE_MEDIA                     = tostring(var.enable_edge_media)
-    EDGE_MEDIA_GCS_BUCKET                 = ""
-    EDGE_MEDIA_GCS_PREFIX                 = local.edge_media_prefix
-    EDGE_MEDIA_ALLOWED_EXTS               = var.edge_media_allowed_exts
-    EDGE_MEDIA_SIGNED_URL_EXPIRES_SECONDS = tostring(var.edge_media_signed_url_expires_seconds)
+    INGEST_AUTH_MODE = lower(var.ingest_auth_mode)
 
     # Processing hardening (reclaimer defaults)
     PROCESSING_TTL_SECONDS = "900"
@@ -123,19 +114,6 @@ resource "google_storage_bucket" "raw" { #tfsec:ignore:google-storage-bucket-enc
     }
   }
 
-  dynamic "lifecycle_rule" {
-    for_each = var.edge_media_prefix_retention_days > 0 ? [1] : []
-    content {
-      action {
-        type = "Delete"
-      }
-      condition {
-        age            = var.edge_media_prefix_retention_days
-        matches_prefix = ["${local.edge_media_prefix}/"]
-      }
-    }
-  }
-
   labels = local.labels
 }
 
@@ -206,9 +184,6 @@ module "secrets" {
     "eventpulse-ingest-token" = {
       labels = local.labels
     }
-    "eventpulse-edge-enroll-token" = {
-      labels = local.labels
-    }
   }
 }
 
@@ -269,9 +244,6 @@ module "cloud_run" {
     } : {},
     lower(var.ingest_auth_mode) == "token" ? {
       INGEST_TOKEN = module.secrets.secret_names["eventpulse-ingest-token"]
-    } : {},
-    var.enable_edge_enroll ? {
-      EDGE_ENROLL_TOKEN = module.secrets.secret_names["eventpulse-edge-enroll-token"]
     } : {}
   )
 
@@ -313,15 +285,9 @@ resource "google_service_account_iam_member" "cloudscheduler_token_creator" {
 }
 
 # Allow runtime SA to sign blobs (used for GCS signed URLs) without a private key.
-#
-# IMPORTANT:
-# - Edge devices rely on device-authenticated signed URLs under /api/edge/uploads/*.
-# - Human/admin flows can use /api/uploads/* (internal auth).
-#
-# Both flows require IAMCredentials signBlob (roles/iam.serviceAccountTokenCreator) on the
-# runtime service account. We enable this binding when either lane is enabled.
+# This is required for /api/uploads/gcs_signed_url.
 resource "google_service_account_iam_member" "runtime_self_token_creator" {
-  count = (var.enable_signed_urls || var.enable_edge_signed_urls) ? 1 : 0
+  count = var.enable_signed_urls ? 1 : 0
 
   service_account_id = "projects/${var.project_id}/serviceAccounts/${module.service_accounts.runtime_service_account_email}"
   role               = "roles/iam.serviceAccountTokenCreator"

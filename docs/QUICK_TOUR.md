@@ -14,19 +14,7 @@ make up
 Open:
 
 - UI: `http://localhost:8081`
-- Health: `http://localhost:8081/health`
-
-Optional (edge telemetry demo):
-
-```bash
-# Start simulated edge-agent that continuously uploads telemetry
-make edge-up
-```
-
-Then open:
-
-- Devices: `http://localhost:8081/devices`
-- Dataset: `http://localhost:8081/datasets/edge_telemetry`
+- Health: `http://localhost:8081/api/healthz`
 
 ---
 
@@ -118,4 +106,3 @@ Open the UI:
 - **Audit**: operational audit trail for ingestion lifecycle, contract updates, and ops actions
 
 Tip: open an ingestion detail and check the **Audit** tab to see worker lifecycle events.
-

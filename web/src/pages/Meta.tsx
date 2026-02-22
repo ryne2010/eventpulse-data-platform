@@ -152,21 +152,6 @@ export function MetaPage() {
                 <div>
                   <span className="text-muted-foreground">ingest auth:</span> <span className="font-mono">{r?.ingest_auth_mode ?? '—'}</span>
                 </div>
-                <div>
-                  <span className="text-muted-foreground">edge auth:</span> <span className="font-mono">{r?.edge_auth_mode ?? '—'}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">edge enroll:</span>{' '}
-                  <span className="font-mono">{String(r?.edge_enroll_enabled ?? false)}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">edge signed URLs:</span>{' '}
-                  <span className="font-mono">{String(r?.enable_edge_signed_urls ?? false)}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">edge datasets:</span>{' '}
-                  <span className="font-mono">{(r?.edge_allowed_datasets ?? []).join(', ') || '—'}</span>
-                </div>
               </div>
 
               <Separator />

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import random
-import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -88,79 +87,6 @@ def build_parcels(rows: int, *, seed: int = 42) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
-def build_edge_telemetry(rows: int, *, seed: int = 31415, device_count: int = 4) -> pd.DataFrame:
-    """Generate synthetic edge telemetry events.
-
-    Output is CSV-friendly and aligned with data/contracts/edge_telemetry.yaml.
-    """
-
-    rng = random.Random(seed)
-    base_dt = datetime(2025, 1, 1, 0, 0, 0)
-
-    sensors = [
-        ("temp_c", "C", 5.0, 45.0),
-        ("humidity_pct", "%", 5.0, 95.0),
-        ("water_pressure_psi", "psi", 0.0, 120.0),
-        ("oil_pressure_psi", "psi", 0.0, 100.0),
-        ("oil_life_pct", "%", 0.0, 100.0),
-        ("oil_level_pct", "%", 0.0, 100.0),
-        ("drip_oil_level_pct", "%", 0.0, 100.0),
-        ("vibration_g", "g", 0.0, 1.5),
-    ]
-
-    out = []
-    ns = uuid.UUID("9a1d7d3a-0e2e-4e93-84b8-0e7f2f8d3c0a")
-    for i in range(rows):
-        device_id = f"rpi-{(i % device_count) + 1:02d}"
-        ts = base_dt + timedelta(seconds=i * 30 + rng.randint(0, 5))
-
-        is_hb = rng.random() < 0.2
-        event_type = "heartbeat" if is_hb else "reading"
-
-        if is_hb:
-            sensor = None
-            value = None
-            units = None
-            status = rng.choice(["ok", "ok", "ok", "degraded"])  # mostly OK
-            message = None
-        else:
-            sensor, units, lo, hi = rng.choice(sensors)
-            value = round(rng.uniform(lo, hi), 3)
-            status = None
-            message = None
-
-        lat = 39.0 + rng.random() * 0.25
-        lon = -104.0 - rng.random() * 0.25
-
-        battery_v = round(rng.uniform(3.6, 4.2), 3)
-        rssi_dbm = int(rng.uniform(-112, -70))
-        fw = rng.choice(["edge-agent/0.2.0", "edge-agent/0.3.5"])
-
-        # Deterministic event_id for repeatable sample files.
-        event_id = str(uuid.uuid5(ns, f"{device_id}:{ts.isoformat()}:{sensor}:{value}"))
-
-        out.append(
-            {
-                "event_id": event_id,
-                "device_id": device_id,
-                "event_type": event_type,
-                "sensor": sensor,
-                "value": value,
-                "units": units,
-                "ts": ts.isoformat(),
-                "lat": lat,
-                "lon": lon,
-                "battery_v": battery_v,
-                "rssi_dbm": rssi_dbm,
-                "firmware_version": fw,
-                "status": status,
-                "message": message,
-            }
-        )
-
-    return pd.DataFrame(out)
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--rows", type=int, default=60)
@@ -190,40 +116,12 @@ def main() -> None:
     qfail_path = out_dir / "parcels_quality_fail_duplicate_pk.xlsx"
     qfail.to_excel(qfail_path, index=False)
 
-    # ---------------------------------------------------------------------
-    # Edge telemetry samples (CSV)
-    # ---------------------------------------------------------------------
-
-    edge_base = build_edge_telemetry(args.rows)
-    edge_base_path = out_dir / "edge_telemetry_sample.csv"
-    edge_base.to_csv(edge_base_path, index=False)
-
-    edge_drift_add = edge_base.copy()
-    edge_drift_add["carrier"] = [random.choice(["verizon", "att", "tmobile"]) for _ in range(len(edge_drift_add))]
-    edge_drift_add_path = out_dir / "edge_telemetry_drift_add_column.csv"
-    edge_drift_add.to_csv(edge_drift_add_path, index=False)
-
-    edge_drift_type = edge_base.copy()
-    edge_drift_type["rssi_dbm"] = edge_drift_type["rssi_dbm"].astype(str)
-    edge_drift_type_path = out_dir / "edge_telemetry_drift_type_change.csv"
-    edge_drift_type.to_csv(edge_drift_type_path, index=False)
-
-    edge_qfail = edge_base.copy()
-    if len(edge_qfail) >= 2:
-        edge_qfail.loc[0, "event_id"] = edge_qfail.loc[1, "event_id"]
-    edge_qfail_path = out_dir / "edge_telemetry_quality_fail_duplicate_pk.csv"
-    edge_qfail.to_csv(edge_qfail_path, index=False)
-
     print("Wrote:")
     for p in [
         baseline_path,
         drift_add_path,
         drift_type_path,
         qfail_path,
-        edge_base_path,
-        edge_drift_add_path,
-        edge_drift_type_path,
-        edge_qfail_path,
     ]:
         print(" -", p)
 

@@ -117,19 +117,25 @@ def validate_df(df: pd.DataFrame, contract: DatasetContract) -> QualityResult:
 
 def _looks_like_number(series: pd.Series) -> bool:
     try:
-        numeric = pd.to_numeric(series, errors="coerce")
-        return numeric.notna().mean() > 0.8
+        values = series.dropna()
+        if values.empty:
+            return True
+        numeric = pd.to_numeric(values, errors="coerce")
+        return bool(numeric.notna().all())
     except Exception:
         return False
 
 
 def _looks_like_int(series: pd.Series) -> bool:
     try:
-        numeric = pd.to_numeric(series, errors="coerce")
-        if numeric.notna().mean() <= 0.8:
+        values = series.dropna()
+        if values.empty:
+            return True
+        numeric = pd.to_numeric(values, errors="coerce")
+        if numeric.isna().any():
             return False
         # int-like if all decimals are .0
-        frac = numeric.dropna() % 1.0
+        frac = numeric % 1.0
         return bool((frac < 1e-9).all())
     except Exception:
         return False
@@ -141,4 +147,4 @@ def _looks_like_bool(series: pd.Series) -> bool:
         return True
     allowed = {"true", "false", "1", "0", "yes", "no", "y", "n"}
     # Pandas returns numpy scalar types for reductions; cast to builtin bool for type-checkers.
-    return bool(s.isin(list(allowed)).mean() > 0.8)
+    return bool(s.isin(list(allowed)).all())

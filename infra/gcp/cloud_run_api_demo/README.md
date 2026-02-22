@@ -8,12 +8,7 @@ This Terraform root deploys EventPulse to Cloud Run with a serverless-friendly c
 
 Optional public ingest hardening:
 
-- `TF_VAR_ingest_auth_mode=token` → sets `INGEST_AUTH_MODE=token` on the service and wires `INGEST_TOKEN` from Secret Manager.
-
-Optional edge fleet convenience:
-
-- `TF_VAR_enable_edge_enroll=true` → wires `EDGE_ENROLL_TOKEN` from Secret Manager and enables `/api/edge/enroll`
-  for fast field-device provisioning.
+- `TF_VAR_ingest_auth_mode=token` -> sets `INGEST_AUTH_MODE=token` on the service and wires `INGEST_TOKEN` from Secret Manager.
 
 See:
 

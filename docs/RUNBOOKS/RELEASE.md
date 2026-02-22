@@ -35,7 +35,7 @@ make verify-gcp
 
 1.  Build/push the container image (Cloud Build)
 2.  Apply Terraform (Cloud Run + IAM + secrets)
-3.  Verify `/healthz` + `/api/meta`
+3.  Verify `/api/healthz` + `/api/meta`
 4.  Smoke test a small ingestion
 5.  Monitor logs + Postgres load
 
@@ -53,5 +53,5 @@ Quick rollback options:
 ## Post-release
 
 -   Verify logs are clean and latency is stable
--   Confirm devices continue to upload (Devices page)
+-   Confirm ingestion throughput and quality trends look normal
 -   Capture issues and improvements

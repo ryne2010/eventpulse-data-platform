@@ -28,7 +28,7 @@ def test_spa_static_files_fallback_for_client_route(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text("<html><body>ok</body></html>", encoding="utf-8")
     static = SPAStaticFiles(directory=str(tmp_path), html=True)
 
-    response = asyncio.run(static.get_response("devices", _scope("/devices")))
+    response = asyncio.run(static.get_response("datasets", _scope("/datasets")))
 
     assert response.status_code == 200
 

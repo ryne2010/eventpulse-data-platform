@@ -54,9 +54,6 @@ In the UI, use the top nav:
 - **Ingestions** — browse events; click through to quality/drift/lineage/audit
 - **Datasets** — contract explorer/editor, schema history, curated sample, and marts
 - **Products** — catalog of published marts (consumption layer)
-- **Devices** — edge telemetry device health + **map** + **alerts** + provisioning (edge_telemetry demo)
-  - click a device id for per-device telemetry + day-2 ops commands
-- **Media** — optional edge device photo/video artifacts (webcam snapshots), requires internal auth
 - **Trends** — quality pass/fail trends across recent ingestions
 - **Audit** — operational audit log
 - **Ingest** — direct upload (dev), signed URL upload (prod), and backfills
@@ -66,9 +63,6 @@ In the UI, use the top nav:
 
 ```bash
 curl -X POST 'http://localhost:8081/api/demo/seed/parcels?limit=50&per_ingestion_max=10'
-
-# Edge telemetry demo (RPi-style)
-curl -X POST 'http://localhost:8081/api/demo/seed/edge_telemetry?limit=200&per_ingestion_max=200'
 ```
 
 Then visit the UI and watch ingestions progress (or use **Dashboard → Seed demo data**).
@@ -99,8 +93,7 @@ curl -X POST \
   --data-binary @./data/samples/parcels_baseline.xlsx
 
 > **Security note:** In production, consider setting `INGEST_AUTH_MODE=token` and a strong
-> `INGEST_TOKEN` for human/admin uploads. Field devices should use the **per-device token**
-> model (`EDGE_AUTH_MODE=token`) and the `/api/edge/*` endpoints.
+> `INGEST_TOKEN` for human/admin uploads.
 ```
 
 > **Cloud Run note:** request bodies have size limits. For larger files, use one of the GCS-backed paths:
@@ -125,23 +118,6 @@ curl -X POST \
 > ```
 >
 > For signed URLs + event-driven ingestion wiring, see `docs/DEPLOY_GCP.md`.
-### 3) Edge devices (RPi / field sensors)
-
-Field devices (Raspberry Pi sensors over 5G/LTE) should use the **edge ingestion**
-endpoints and the per-device token auth model:
-
-- `POST /api/edge/uploads/gcs_signed_url` → device uploads directly to GCS via signed URL
-- `POST /api/edge/ingest/from_gcs` → finalize ingestion (register + enqueue)
-- `POST /api/edge/ingest/upload` → direct API upload (local dev / small payloads)
-
-Fast provisioning option (recommended for deployment speed): configure `EDGE_ENROLL_TOKEN`
-on the API and let devices self-enroll via `POST /api/edge/enroll`.
-
-See `docs/EDGE_RPI.md` for a practical Raspberry Pi deployment walkthrough.
-
-
----
-
 ## Cloud Run (production demo)
 
 The Cloud Run lane is optimized for serverless:
@@ -182,9 +158,6 @@ make task-token-secret
 
 # Optional (protect public ingest endpoint)
 # make ingest-token-secret
-
-# Optional (fast edge provisioning)
-# TF_VAR_enable_edge_enroll=true make edge-enroll-token-secret
 ```
 
 4) Build + deploy:
@@ -208,9 +181,6 @@ make verify-gcp ENV=dev
 - `docs/QUICK_TOUR.md` — hands-on walkthrough
 - `docs/LOCAL_DEV.md` — local dev workflows (Docker and hybrid)
 - `docs/DEPLOY_GCP.md` — Cloud Run deployment notes + troubleshooting
-- `docs/EDGE_RPI.md` — edge telemetry (Raspberry Pi agent)
-- `docs/FIELD_OPS.md` — field deployment runbook (RPi + LTE/5G)
-- `docs/HARDWARE.md` — cheap + available field hardware options
 - `docs/MAINTENANCE.md` — DB size widgets + pruning retention data
 - `docs/OBSERVABILITY.md` — logs, request IDs, and trace correlation
 - `docs/SCHEMA_DRIFT.md` — dataset schema drift logic and policies

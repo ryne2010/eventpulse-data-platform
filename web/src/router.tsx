@@ -8,9 +8,6 @@ import DatasetPage from './pages/Dataset'
 import { UploadPage } from './pages/Upload'
 import { MetaPage } from './pages/Meta'
 import { ProductsPage } from './pages/Products'
-import { DevicesPage } from './pages/Devices'
-import { DeviceDetailPage } from './pages/DeviceDetail'
-import { MediaPage } from './pages/Media'
 import { TrendsPage } from './pages/Trends'
 import { AuditPage } from './pages/Audit'
 
@@ -24,8 +21,6 @@ const rootRoute = createRootRoute({
         { to: '/ingestions', label: 'Ingestions' },
         { to: '/datasets', label: 'Datasets' },
         { to: '/products', label: 'Products' },
-        { to: '/devices', label: 'Devices' },
-        { to: '/media', label: 'Media' },
         { to: '/trends', label: 'Trends' },
         { to: '/audit', label: 'Audit' },
         { to: '/upload', label: 'Ingest' },
@@ -75,24 +70,6 @@ const productsRoute = createRoute({
   component: ProductsPage,
 })
 
-const devicesRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/devices',
-  component: DevicesPage,
-})
-
-const deviceRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/devices/$deviceId',
-  component: DeviceDetailPage,
-})
-
-const mediaRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/media',
-  component: MediaPage,
-})
-
 const trendsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trends',
@@ -124,9 +101,6 @@ export const routeTree = rootRoute.addChildren([
   datasetsRoute,
   datasetRoute,
   productsRoute,
-  devicesRoute,
-  deviceRoute,
-  mediaRoute,
   trendsRoute,
   auditRoute,
   uploadRoute,

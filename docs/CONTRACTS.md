@@ -20,15 +20,6 @@ Treat this document as non-negotiable unless explicitly changed via ADR.
 
 Notes:
 - `POST /api/ingest/upload` may require `X-Ingest-Token` when `INGEST_AUTH_MODE=token`.
-- **Edge device API**
-  - `GET /api/edge/ping`
-  - `POST /api/edge/ingest/upload` (device-authenticated direct upload)
-  - `POST /api/edge/uploads/gcs_signed_url` (device-authenticated signed URL init)
-  - `POST /api/edge/ingest/from_gcs` (device-authenticated finalize)
-
-Notes:
-- Edge endpoints use per-device tokens when `EDGE_AUTH_MODE=token`.
-  - Required headers: `X-Device-Id`, `X-Device-Token`
 - **Observability API**
   - `GET /api/ingestions`
   - `GET /api/ingestions/{id}`

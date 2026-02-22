@@ -1,10 +1,10 @@
 # Security & auth model
 
-This project is designed to be **field-deployable** (internet-exposed ingestion from edge devices) while keeping the operational surface area small and costs minimal.
+This project is designed to run as a single Cloud Run service for real-estate data ingestion and analytics UI with low operational overhead.
 
 It supports multiple auth modes so you can start simple locally and progressively harden for production.
 
-> This is not a compliance framework. It’s a pragmatic security model for a Cloud Run + Cloud SQL + GCS reference platform.
+> This is not a compliance framework. It is a pragmatic security model for a Cloud Run + Postgres + GCS reference platform.
 
 ---
 
@@ -12,63 +12,41 @@ It supports multiple auth modes so you can start simple locally and progressivel
 
 Assume:
 
-- The Cloud Run service may be **publicly reachable** (edge devices send telemetry over 5G).
+- The Cloud Run service may be publicly reachable in simple deployments.
 - Attackers can:
   - scan endpoints
   - try to spam ingest endpoints
   - replay/guess tokens
-  - upload malformed or huge files
+  - upload malformed or oversized files
 
 We aim to prevent:
 
 - unauthorized ingestion
-- unauthorized device enrollment
 - unauthorized access to internal ops endpoints
+- accidental exposure of sensitive data
 - cross-site request exfiltration from the SPA
 
 ---
 
 ## Auth layers
 
-EventPulse separates responsibilities into three logical planes:
+EventPulse separates responsibilities into two logical planes:
 
-1) **Edge plane**: device → `/api/edge/...`
-2) **Ingest plane**: humans/tools → `/api/ingest/...` (direct uploads)
-3) **Ops plane**: admin/UI → `/internal/...` + selected `/api/...` admin endpoints
+1) **Ingest plane**: humans/tools -> `/api/ingest/...`
+2) **Ops plane**: admin/UI -> `/internal/...` + selected `/api/...` admin endpoints
 
-### 1) Edge plane: device tokens + optional enrollment token
+### 1) Ingest plane: ingest token (optional)
 
-**Goal:** allow many cheap field devices to send telemetry securely with minimal setup.
-
-Recommended production mode:
-
-- `EDGE_AUTH_MODE=token`
-- Devices send `X-Device-Id` + `X-Device-Token`.
-- Tokens are stored **hashed** in Postgres (PBKDF2) and verified server-side.
-
-Optional (recommended) bootstrapping:
-
-- `ENABLE_EDGE_ENROLL=true`
-- `EDGE_ENROLL_TOKEN` stored in Secret Manager
-- Device calls `/api/edge/enroll` once to exchange the enroll token for a **per-device token**.
-
-Operational notes:
-
-- Token rotation is supported (`/api/edge/devices/{id}/rotate_token`).
-- Revocation is supported (`/api/edge/devices/{id}/revoke`).
-
-### 2) Ingest plane: ingest token
-
-**Goal:** protect simple direct file uploads.
+**Goal:** protect direct upload APIs when the service is public.
 
 - `INGEST_AUTH_MODE=token` requires `X-Ingest-Token` for `/api/ingest/upload`.
-- Recommended for demos or controlled environments.
+- Keep `INGEST_TOKEN` in Secret Manager.
 
 For production-scale uploads, prefer **GCS signed URL uploads** instead of direct uploads.
 
-### 3) Ops plane: Cloud Run IAM or task token
+### 2) Ops plane: Cloud Run IAM or task token
 
-**Goal:** keep admin endpoints inaccessible to unauthenticated callers.
+**Goal:** keep internal endpoints inaccessible to unauthenticated callers.
 
 - `TASK_AUTH_MODE=iam` (recommended): deploy Cloud Run with `allow_unauthenticated=false` and call with OIDC.
 - `TASK_AUTH_MODE=token`: requires `X-Task-Token`.
@@ -81,7 +59,7 @@ Defense-in-depth:
 
 ## Signed URL model (recommended)
 
-For large files and field reliability:
+For large files and reliability:
 
 - API mints a **V4 signed URL** for a specific object name with preconditions.
 - Client uploads directly to GCS.
@@ -100,13 +78,13 @@ The API sets baseline security headers for the SPA.
 
 Important details:
 
-- The SPA uses browser-based **GCS signed URL uploads**, so CSP `connect-src` must allow:
+- Browser-based **GCS signed URL uploads** require CSP `connect-src` to allow:
   - `https://storage.googleapis.com`
 
-- FastAPI Swagger `/docs` and Redoc `/redoc` load assets from a CDN by default. The CSP is configured so that:
-  - **only** the docs routes allow `https://cdn.jsdelivr.net`
+- FastAPI Swagger `/docs` and Redoc `/redoc` load assets from a CDN by default. CSP is configured so that:
+  - only docs routes allow `https://cdn.jsdelivr.net`
 
-If you prefer to avoid CDNs in production, you can disable FastAPI docs (or host the assets yourself).
+If you prefer to avoid CDNs in production, disable FastAPI docs (or host assets yourself).
 
 ---
 
@@ -117,23 +95,21 @@ This repo intentionally starts **without** Cloud Armor to keep costs minimal.
 When Cloud Armor adds value:
 
 - you are under sustained abuse (bot traffic, volumetric scanning)
-- you need IP allowlists/denylists at the edge
+- you need IP allowlists/denylists
 - you want managed WAF rules
 
-If you don’t have those needs yet, you can generally rely on:
+If you do not have those needs yet, you can generally rely on:
 
 - strong tokens + limited surface area
 - Cloud Run IAM for internal endpoints
-- reasonable request limits + observability
+- request limits + observability
 
 ---
 
 ## Practical production checklist
 
-- [ ] Use `EDGE_AUTH_MODE=token` and rotate any leaked tokens
-- [ ] Keep `EDGE_ENROLL_TOKEN` in Secret Manager (never in git)
 - [ ] Use `TASK_AUTH_MODE=iam` for internal endpoints (Cloud Run private)
+- [ ] Keep `DATABASE_URL`, `TASK_TOKEN`, and `INGEST_TOKEN` in Secret Manager
 - [ ] Prefer GCS signed URL uploads for large ingestion workloads
 - [ ] Use a private GCS bucket for raw landing + signed URLs for access
 - [ ] Keep retention under control (see `docs/MAINTENANCE.md`)
-

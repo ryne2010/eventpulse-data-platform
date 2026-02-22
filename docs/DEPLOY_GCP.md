@@ -16,13 +16,13 @@ The Terraform in `infra/gcp/cloud_run_api_demo/` provisions:
 
 Optionally, it can also provision:
 
-- Pub/Sub + GCS notifications for **event-driven ingestion** (GCS finalize → Pub/Sub push → Cloud Run)
+- Pub/Sub + GCS notifications for **event-driven ingestion** (GCS finalize -> Pub/Sub push -> Cloud Run)
 - IAM plumbing for **GCS signed URLs** (no service account keys)
 - Cloud Scheduler jobs for routine ops (**reclaim stuck ingestions**, optional retention prune)
 
 What it does **not** provision (by design):
 
-- **Postgres itself** (e.g., Cloud SQL). You provide a `DATABASE_URL` and EventPulse uses it for metadata + curated tables.
+- **Postgres itself** (for example Cloud SQL). You provide a `DATABASE_URL` and EventPulse uses it for metadata + curated tables.
 
 If your `DATABASE_URL` uses the Cloud SQL unix-socket form (`host=/cloudsql/...`), also set:
 
@@ -56,10 +56,9 @@ gcloud config set run/region us-central1
 
 EventPulse reads the following secrets at runtime:
 
-- `eventpulse-database-url` → `DATABASE_URL` (**required**)
-- `eventpulse-task-token` → `TASK_TOKEN` (**required only when** `allow_unauthenticated=true`)
-- `eventpulse-ingest-token` → `INGEST_TOKEN` (**required only when** `INGEST_AUTH_MODE=token`)
-- `eventpulse-edge-enroll-token` → `EDGE_ENROLL_TOKEN` (**required only when** `enable_edge_enroll=true`)
+- `eventpulse-database-url` -> `DATABASE_URL` (**required**)
+- `eventpulse-task-token` -> `TASK_TOKEN` (**required only when** `allow_unauthenticated=true`)
+- `eventpulse-ingest-token` -> `INGEST_TOKEN` (**required only when** `INGEST_AUTH_MODE=token`)
 
 Terraform creates the **secret containers** only. You add secret **versions** using Make targets.
 
@@ -71,11 +70,8 @@ make infra-gcp PROJECT_ID=your-project REGION=us-central1 ENV=dev
 
 # 2) Add secret versions (paste values, then Ctrl-D)
 make db-secret PROJECT_ID=your-project
-make task-token-secret PROJECT_ID=your-project   # only needed for public deploys
+make task-token-secret PROJECT_ID=your-project    # only needed for public deploys
 make ingest-token-secret PROJECT_ID=your-project  # only needed when ingest token auth is enabled
-
-# Optional (fast field provisioning): enable edge enrollment and add the enroll token secret
-TF_VAR_enable_edge_enroll=true make edge-enroll-token-secret PROJECT_ID=your-project
 
 # 3) Build + deploy
 make deploy-gcp PROJECT_ID=your-project REGION=us-central1 ENV=dev
@@ -88,7 +84,7 @@ TF_VAR_cloud_sql_instance_connection_name=your-project:us-central1:your-pg \
 make deploy-gcp PROJECT_ID=your-project REGION=us-central1 ENV=dev
 ```
 
-Tip: `make deploy-gcp` now runs a **secrets preflight** (`make check-secrets-gcp`) and will fail early with a clear message if versions are missing.
+Tip: `make deploy-gcp` runs a **secrets preflight** (`make check-secrets-gcp`) and fails early if required secret versions are missing.
 
 ---
 
@@ -120,90 +116,9 @@ UI:
 
 ---
 
-## Edge devices (RPi over 5G)
-
-For field devices (Raspberry Pi sensors over a 5G SIM), the recommended posture is:
-
-- **Public Cloud Run** (`allow_unauthenticated=true`) so devices can reach it over the internet
-- **Per-device token auth** on the API edge endpoints (`EDGE_AUTH_MODE=token`)
-- **Direct-to-GCS signed URL uploads** for reliability (`ENABLE_EDGE_SIGNED_URLS=true`)
-- (Recommended for deployment speed) **bootstrap enrollment** via `EDGE_ENROLL_TOKEN` + `POST /api/edge/enroll`
-
-Why this works well on Cloud Run:
-
-- avoids request size/time limits on the API
-- reduces API bandwidth (device uploads straight to GCS)
-- supports token rotation/revocation per device
-
-### Cost + abuse guardrails (start lean)
-
-To keep costs minimal and deployments fast, start **without** Cloud Armor and rely on:
-
-- strong device tokens + rotation/revocation
-- signed URL uploads (reduces API load)
-- Cloud Run `max_instances` (caps cost blast radius)
-
-If you later need WAF/rate limiting at the edge, add Cloud Armor behind an external HTTP(S) Load Balancer.
-
-Deploy with:
-
-```bash
-TF_VAR_allow_unauthenticated=true \
-TF_VAR_edge_auth_mode=token \
-TF_VAR_enable_edge_signed_urls=true \
-TF_VAR_enable_edge_media=true \
-TF_VAR_enable_edge_enroll=true \
-make deploy-gcp PROJECT_ID=your-project REGION=us-central1 ENV=dev
-```
-
-Optional: set `TF_VAR_enable_signed_urls=true` if you want the internal `/api/uploads/gcs_signed_url` helper for human uploads (protected by internal auth).
-
-Note: Terraform grants the runtime service account the IAM permission needed to mint signed URLs when either `enable_edge_signed_urls` or `enable_signed_urls` is enabled.
-
-Then configure runtime env vars (Terraform already wires most; confirm in the Cloud Run service):
-
-- `STORAGE_BACKEND=gcs`
-- `EDGE_AUTH_MODE=token`
-- `EDGE_ALLOWED_DATASETS=edge_telemetry`
-- `ENABLE_EDGE_SIGNED_URLS=true`
-- `ENABLE_EDGE_MEDIA=true` (optional; enables `/api/edge/media/*`)
-- `EDGE_MEDIA_GCS_PREFIX=media` (or site-specific prefix)
-- `EDGE_OFFLINE_THRESHOLD_SECONDS=600` (optional; device offline heuristic)
-
-Provision each device using the internal admin endpoint:
-
-- Option A (recommended): set `EDGE_ENROLL_TOKEN` on the Pi and let the agent self-enroll.
-- Option B: `POST /internal/admin/devices` (returns `device_token` once)
-
-Then run the edge agent container on the Pi with:
-
-- `EDGE_API_BASE_URL=https://YOUR_CLOUD_RUN_URL`
-- `EDGE_DEVICE_ID=rpi-001`
-- `EDGE_ENROLL_TOKEN=...` (recommended) OR `EDGE_DEVICE_TOKEN=...` (manual provisioning)
-- `EDGE_UPLOAD_MODE=signed_url`
-
-See: `docs/EDGE_RPI.md`.
-
-### Edge media lifecycle (cost control)
-
-If you enable edge media uploads, add a short lifecycle on the media prefix to avoid unbounded storage growth:
-
-```bash
-TF_VAR_enable_edge_media=true \
-TF_VAR_edge_media_gcs_prefix=media \
-TF_VAR_edge_media_prefix_retention_days=14 \
-make apply-gcp PROJECT_ID=your-project REGION=us-central1 ENV=dev
-```
-
-Notes:
-
-- This repo's Terraform applies the rule on the raw bucket prefix (`media/` by default).
-- Set `TF_VAR_edge_media_prefix_retention_days=0` to disable the prefix-specific rule.
-- See `docs/FIELD_OPS.md` for the media end-to-end validation checklist.
-
 ## Private deploy (IAM) with signed URLs + event-driven ingestion
 
-This is the recommended "production-ish" posture:
+This is the recommended production posture:
 
 - Cloud Run is **private** (Cloud Run IAM)
 - Cloud Tasks and Pub/Sub push authenticate using **OIDC**
@@ -224,11 +139,11 @@ Under the hood this sets:
 
 ### Note on the UI in IAM mode
 
-The SPA does **not** attach `Authorization: Bearer …` identity tokens on requests.
+The SPA does **not** attach `Authorization: Bearer ...` identity tokens on requests.
 
 So for a private Cloud Run deployment you typically:
 
-- Use **CLI** calls (curl + `gcloud auth print-identity-token`) for internal endpoints, or
+- Use CLI calls (`curl` + `gcloud auth print-identity-token`) for internal endpoints, or
 - Put the service behind an auth layer (IAP / Identity Platform / reverse proxy) if you want interactive UI access.
 
 ---
@@ -318,24 +233,5 @@ gsutil cp ./data/samples/parcels_baseline.xlsx "gs://${RAW_BUCKET}/uploads/parce
 curl -sS -X POST "${URL}/api/ingest/from_gcs" \
   "${AUTH_HEADERS[@]}" \
   -H 'Content-Type: application/json' \
-  -d '{"dataset":"parcels","gcs_uri":"gs://'"${RAW_BUCKET}"'/uploads/parcels_baseline.xlsx","source":"gsutil"}' | jq .
+  -d '{"dataset":"parcels","gcs_uri":"gs://'"$RAW_BUCKET"'/uploads/parcels_baseline.xlsx","source":"manual"}'
 ```
-
----
-
-## Troubleshooting
-
-- **Signed URL generation fails** with a 500/metadata error:
-  - This endpoint is intended for Cloud Run runtime; it uses the metadata server.
-
-- **Signed URL upload returns 403**:
-  - Make sure you are providing the `required_headers` exactly as returned.
-
-- **GCS finalize events never create ingestions**:
-  - Ensure `enable_gcs_event_ingestion=true` and `allow_unauthenticated=false`.
-  - Check Pub/Sub subscription delivery errors in the Cloud Console.
-  - Confirm Cloud Run IAM invoker includes the subscription's OIDC service account.
-
-- **Tasks are created but ingestion stays PROCESSING**:
-  - Check Cloud Run logs for the job handler.
-  - Use the reclaimer endpoint to recover stuck ingestions.

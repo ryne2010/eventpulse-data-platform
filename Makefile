@@ -49,13 +49,6 @@ AR_REPO      ?= eventpulse
 IMAGE_NAME   ?= eventpulse-api
 TAG          ?= latest
 
-# Edge agent image (for Raspberry Pi / field devices)
-EDGE_IMAGE_NAME  ?= eventpulse-edge-agent
-EDGE_IMAGE_TAG   ?= $(TAG)
-
-EDGE_IMAGE_LOCAL := $(EDGE_IMAGE_NAME):$(EDGE_IMAGE_TAG)
-EDGE_IMAGE_REMOTE := $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(AR_REPO)/$(EDGE_IMAGE_NAME):$(EDGE_IMAGE_TAG)
-
 TF_DIR ?= infra/gcp/cloud_run_api_demo
 
 TF_STATE_BUCKET ?= $(PROJECT_ID)-tfstate
@@ -83,14 +76,14 @@ endef
 	up smoke down reset clean clean-py clean-web clean-terraform logs watch \
 	gen ingest list sample \
 	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp build-gcp deploy-gcp url-gcp verify-gcp logs-gcp destroy-gcp \
-	db-secret edge-enroll-token-secret edge-image-build edge-image-export edge-image-load edge-image-push lock web-check
+	db-secret lock web-check
 
 help:
 	@echo "Local targets:"
 	@echo "  init              One-time setup for GCP deploys (persist gcloud project/region)"
 	@echo "  auth              Authenticate gcloud user + ADC (interactive)"
 	@echo "  up               Start local stack (Postgres + API + worker + UI)"
-	@echo "  smoke            Run local smoke checks (compose + API/SPA + edge marts)"
+	@echo "  smoke            Run local smoke checks (compose + API/SPA + parcels marts)"
 	@echo "  down             Stop local stack"
 	@echo "  reset            Remove volumes + reset local data directories"
 	@echo "  clean            Remove local build artifacts (.venv, caches, node_modules, dist, terraform workdirs)"
@@ -114,13 +107,6 @@ help:
 	@echo "  db-secret           Add a DATABASE_URL secret version (reads from stdin)"
 	@echo "  task-token-secret   Add a TASK_TOKEN secret version (reads from stdin)"
 	@echo "  ingest-token-secret Add an INGEST_TOKEN secret version (reads from stdin)"
-	@echo "  edge-enroll-token-secret  Add an EDGE_ENROLL_TOKEN secret version (optional; enables /api/edge/enroll)"
-	@echo ""
-	@echo "Field ops (edge agent):"
-	@echo "  edge-image-build   Build the Raspberry Pi edge-agent container image"
-	@echo "  edge-image-export  Export the edge-agent image to a tar.gz (scp to device + docker load)"
-	@echo "  edge-image-load    Load an exported edge-agent image tar.gz (run on the Pi)"
-	@echo "  edge-image-push    Push the edge-agent image to Artifact Registry (optional)"
 	@echo ""
 	@echo "Reproducibility:"
 	@echo "  lock             Generate uv.lock + pnpm-lock.yaml + Terraform provider lockfile"
@@ -334,7 +320,7 @@ up: doctor init-data
 	$(COMPOSE) up -d --force-recreate postgres redis
 	$(COMPOSE) up --build
 
-smoke: doctor init-data ## End-to-end local smoke check (Compose + API/SPA + edge mart)
+smoke: doctor init-data ## End-to-end local smoke check (Compose + API/SPA + parcels marts)
 	cp -n .env.example .env || true
 	bash scripts/smoke.sh "$(LOCAL_URL)" $(COMPOSE)
 
@@ -368,15 +354,6 @@ logs:
 watch: ## Start watcher service (profile watch)
 	$(COMPOSE) --profile watch up -d --build watcher
 
-edge: ## Run the edge-agent profile (simulated RPi telemetry)
-	$(COMPOSE) --profile edge up --build edge-agent
-
-edge-up: ## Start the edge-agent profile in the background
-	$(COMPOSE) --profile edge up -d --build edge-agent
-
-edge-logs: ## Tail edge-agent logs
-	$(COMPOSE) logs -f --tail=200 edge-agent
-
 
 # Generate contract-compliant sample files under data/samples (uses uv-managed deps).
 gen: doctor
@@ -388,12 +365,6 @@ ingest: ## Upload a sample file for ingestion (no watcher required)
 	@curl -sS -X POST "$(LOCAL_URL)/api/ingest/upload?dataset=parcels&filename=parcels_baseline.xlsx&source=make" \
 		-H "Content-Type: application/octet-stream" \
 		--data-binary @data/samples/parcels_baseline.xlsx | jq .
-
-ingest-edge: ## Upload edge telemetry sample (CSV)
-	@echo "Uploading sample: data/samples/edge_telemetry_sample.csv"
-	@curl -sS -X POST "$(LOCAL_URL)/api/ingest/upload?dataset=edge_telemetry&filename=edge_telemetry_sample.csv&source=make" \
-		-H "Content-Type: application/octet-stream" \
-		--data-binary @data/samples/edge_telemetry_sample.csv | jq .
 
 
 list:
@@ -423,32 +394,6 @@ prune: ## Execute retention pruning (requires confirm=PRUNE)
 		-H "X-Task-Token: $(TASK_TOKEN)" \
 		-H 'Content-Type: application/json' \
 		-d '{"dry_run": false, "confirm": "PRUNE", "audit_older_than_days": 30, "audit_limit": 50000, "ingestions_older_than_days": 90, "ingestions_limit": 5000}' | jq .
-
-
-# -----------------------------
-# Edge device registry helpers (internal endpoints)
-# -----------------------------
-
-device-list: ## List provisioned devices (internal endpoint)
-	@curl -sS "$(LOCAL_URL)/internal/admin/devices?limit=200" \
-		-H "X-Task-Token: $(TASK_TOKEN)" | jq .
-
-device-create: ## Provision a device. Usage: make device-create DEVICE_ID=rpi-001 LABEL="Barn 1"
-	@if [ -z "$(DEVICE_ID)" ]; then echo "ERROR: set DEVICE_ID=..."; exit 2; fi
-	@curl -sS -X POST "$(LOCAL_URL)/internal/admin/devices" \
-		-H "X-Task-Token: $(TASK_TOKEN)" \
-		-H 'Content-Type: application/json' \
-		-d '{"device_id":"$(DEVICE_ID)","label":"$(LABEL)"}' | jq .
-
-device-rotate: ## Rotate a device token. Usage: make device-rotate DEVICE_ID=rpi-001
-	@if [ -z "$(DEVICE_ID)" ]; then echo "ERROR: set DEVICE_ID=..."; exit 2; fi
-	@curl -sS -X POST "$(LOCAL_URL)/internal/admin/devices/$(DEVICE_ID)/rotate_token" \
-		-H "X-Task-Token: $(TASK_TOKEN)" | jq .
-
-device-revoke: ## Revoke a device. Usage: make device-revoke DEVICE_ID=rpi-001
-	@if [ -z "$(DEVICE_ID)" ]; then echo "ERROR: set DEVICE_ID=..."; exit 2; fi
-	@curl -sS -X POST "$(LOCAL_URL)/internal/admin/devices/$(DEVICE_ID)/revoke" \
-		-H "X-Task-Token: $(TASK_TOKEN)" | jq .
 
 # -----------------------------
 # GCP deploy lane (Cloud Run)
@@ -491,9 +436,7 @@ check-secrets-gcp: doctor-gcp infra-gcp
 	@set -euo pipefail; \
 	ALLOW_UNAUTH="$${TF_VAR_allow_unauthenticated:-true}"; \
 	INGEST_MODE="$${TF_VAR_ingest_auth_mode:-none}"; \
-	EDGE_ENROLL="$${TF_VAR_enable_edge_enroll:-false}"; \
 	INGEST_MODE_LC=$$(printf '%s' "$$INGEST_MODE" | tr '[:upper:]' '[:lower:]'); \
-	EDGE_ENROLL_LC=$$(printf '%s' "$$EDGE_ENROLL" | tr '[:upper:]' '[:lower:]'); \
 	echo "Checking required Secret Manager versions..."; \
 	missing=0; \
 	check_secret() { \
@@ -520,11 +463,6 @@ check-secrets-gcp: doctor-gcp infra-gcp
 		check_secret eventpulse-ingest-token INGEST_TOKEN "make ingest-token-secret"; \
 	else \
 		echo "  ✓ INGEST_TOKEN not required (INGEST_AUTH_MODE!=token)"; \
-	fi; \
-	if [ "$$EDGE_ENROLL_LC" = "true" ]; then \
-		check_secret eventpulse-edge-enroll-token EDGE_ENROLL_TOKEN "make edge-enroll-token-secret"; \
-	else \
-		echo "  ✓ EDGE_ENROLL_TOKEN not required (enable_edge_enroll=false)"; \
 	fi; \
 	if [ "$$missing" -ne 0 ]; then \
 		echo ""; \
@@ -634,64 +572,6 @@ task-token-secret: doctor-gcp
 ingest-token-secret: doctor-gcp
 	@echo "Paste INGEST_TOKEN then press Ctrl-D (recommend: 32+ random bytes urlsafe)";
 	@gcloud secrets versions add eventpulse-ingest-token --data-file=-
-
-# Add an EDGE_ENROLL_TOKEN secret version (reads from stdin).
-# Usage:
-#   TF_VAR_enable_edge_enroll=true make edge-enroll-token-secret
-#   (paste a random token and press Ctrl-D)
-edge-enroll-token-secret: doctor-gcp
-	@echo "Paste EDGE_ENROLL_TOKEN then press Ctrl-D (recommend: 32+ random bytes urlsafe)";
-	@gcloud secrets versions add eventpulse-edge-enroll-token --data-file=-
-
-
-# -----------------------------
-# Field ops: edge agent image
-# -----------------------------
-
-EDGE_IMAGE_TAR ?= dist/$(EDGE_IMAGE_NAME)_$(EDGE_IMAGE_TAG).tar.gz
-
-# Target platform for the edge-agent image (default: arm64 for Raspberry Pi OS 64-bit).
-#
-# Notes:
-# - On an M2 MacBook Pro, linux/arm64 is the native arch (fast builds).
-# - On an x86_64 machine, use Docker Buildx + QEMU to build linux/arm64.
-EDGE_IMAGE_PLATFORM ?= linux/arm64
-
-edge-image-build: ## Build the edge-agent container image (default: linux/arm64)
-	$(call require,docker)
-	@echo "Building edge agent image: $(EDGE_IMAGE_LOCAL) (platform=$(EDGE_IMAGE_PLATFORM))"
-	@if docker buildx version >/dev/null 2>&1; then \
-		docker buildx build --platform "$(EDGE_IMAGE_PLATFORM)" -t "$(EDGE_IMAGE_LOCAL)" -f services/edge_agent/Dockerfile --load .; \
-	else \
-		echo "docker buildx not available; falling back to docker build (host arch)" >&2; \
-		docker build -t "$(EDGE_IMAGE_LOCAL)" -f services/edge_agent/Dockerfile .; \
-	fi
-
-edge-image-export: edge-image-build ## Export the edge-agent image to a tar.gz (scp to device + docker load)
-	$(call require,docker)
-	@mkdir -p dist
-	@echo "Exporting $(EDGE_IMAGE_LOCAL) -> $(EDGE_IMAGE_TAR)"
-	@docker save "$(EDGE_IMAGE_LOCAL)" | gzip > "$(EDGE_IMAGE_TAR)"
-	@echo ""
-	@echo "Copy to a Pi and load:";
-	@echo "  scp $(EDGE_IMAGE_TAR) pi@PI_HOST:/tmp/";
-	@echo "  ssh pi@PI_HOST 'gunzip -c /tmp/$(EDGE_IMAGE_NAME)_$(EDGE_IMAGE_TAG).tar.gz | docker load'";
-	@echo ""
-	@echo "Then set EDGE_AGENT_IMAGE=$(EDGE_IMAGE_LOCAL) in /etc/eventpulse-edge/edge.env and restart the service."
-
-edge-image-load: ## Load an exported edge-agent image tar.gz (run on the Pi)
-	$(call require,docker)
-	@if [ ! -f "$(EDGE_IMAGE_TAR)" ]; then echo "Missing $(EDGE_IMAGE_TAR)"; exit 1; fi
-	@echo "Loading $(EDGE_IMAGE_TAR)"
-	@gunzip -c "$(EDGE_IMAGE_TAR)" | docker load
-
-edge-image-push: edge-image-build doctor-gcp ## Push the edge-agent image to Artifact Registry (optional)
-	$(call require,docker)
-	@echo "Tagging $(EDGE_IMAGE_LOCAL) -> $(EDGE_IMAGE_REMOTE)"
-	@docker tag "$(EDGE_IMAGE_LOCAL)" "$(EDGE_IMAGE_REMOTE)"
-	@echo "Pushing: $(EDGE_IMAGE_REMOTE)"
-	@gcloud auth configure-docker "$(REGION)-docker.pkg.dev" -q
-	@docker push "$(EDGE_IMAGE_REMOTE)"
 
 # Generate lockfiles locally for team reproducibility.
 lock: doctor

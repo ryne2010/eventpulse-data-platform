@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Tuple
 
 
@@ -48,22 +48,6 @@ class Settings:
     signed_url_expires_seconds: int = int(os.getenv("SIGNED_URL_EXPIRES_SECONDS", "900"))
     require_signed_url_sha256: bool = _truthy(os.getenv("REQUIRE_SIGNED_URL_SHA256", "true"))
 
-    # -----------------
-    # Edge media uploads (optional)
-    # -----------------
-    # Optional signed-URL flow for edge devices to upload photos/videos directly to GCS.
-    # This is intentionally separate from ingestion files: media objects are not processed
-    # by the data-quality pipeline unless you build a dedicated processor.
-    enable_edge_media: bool = _truthy(os.getenv("ENABLE_EDGE_MEDIA", "false"))
-    edge_media_gcs_bucket: str = os.getenv("EDGE_MEDIA_GCS_BUCKET", "")
-    edge_media_gcs_prefix: str = os.getenv("EDGE_MEDIA_GCS_PREFIX", "media")
-    edge_media_signed_url_expires_seconds: int = int(
-        os.getenv("EDGE_MEDIA_SIGNED_URL_EXPIRES_SECONDS", os.getenv("SIGNED_URL_EXPIRES_SECONDS", "900"))
-    )
-    edge_media_allowed_exts: List[str] = field(
-        default_factory=lambda: _split_csv(os.getenv("EDGE_MEDIA_ALLOWED_EXTS", ".jpg,.jpeg,.png,.mp4,.webm"))
-    )
-
     # Event-driven ingestion from GCS object finalize events (Cloud Run lane)
     enable_gcs_event_ingestion: bool = _truthy(os.getenv("ENABLE_GCS_EVENT_INGESTION", "false"))
 
@@ -109,7 +93,7 @@ class Settings:
     # Optional auth for the public ingest endpoint (/api/ingest/upload).
     #
     # Why this exists:
-    # - In production, you may keep the ingest service public (edge devices, partners)
+    # - In production, you may keep the ingest service public (partners, external sources)
     #   but still want a shared-secret to prevent drive-by uploads.
     # - This is intentionally *separate* from TASK_TOKEN, which protects internal
     #   admin/task endpoints.
@@ -119,44 +103,6 @@ class Settings:
     # - token: require X-Ingest-Token header
     ingest_auth_mode: str = os.getenv("INGEST_AUTH_MODE", "none").lower()
     ingest_token: str = os.getenv("INGEST_TOKEN", "")
-
-    # -----------------
-    # Edge device auth (field devices)
-    # -----------------
-    # Field devices (ex: Raspberry Pi over 5G) typically cannot use Cloud Run IAM.
-    # We support a per-device token model with server-side revocation and rotation.
-    #
-    # Modes:
-    # - none:  no auth required (local demo only)
-    # - token: require X-Device-Id + X-Device-Token
-    _edge_auth_default: str = "none" if os.getenv("APP_ENV", "local").lower() == "local" else "token"
-    edge_auth_mode: str = os.getenv("EDGE_AUTH_MODE", _edge_auth_default).lower()
-
-    # Optional bootstrap enrollment token.
-    #
-    # Field reality: manually provisioning unique tokens onto many devices slows down
-    # deployments. If EDGE_ENROLL_TOKEN is set, edge devices may POST to /api/edge/enroll
-    # with a shared enrollment token to mint/rotate their *per-device* token.
-    #
-    # Security note: treat this like a fleet secret. Keep it in Secret Manager and rotate
-    # if you suspect compromise.
-    edge_enroll_token: str = os.getenv("EDGE_ENROLL_TOKEN", "")
-
-    # Allow-list which datasets devices can upload into (comma-separated).
-    # Default keeps the demo tight: only edge_telemetry.
-    edge_allowed_datasets: Tuple[str, ...] = tuple(_split_csv(os.getenv("EDGE_ALLOWED_DATASETS", "edge_telemetry")))
-
-    # When true, expose device-authenticated signed URL helpers under /api/edge/.
-    # This is the recommended production path on Cloud Run (avoids request size limits).
-    enable_edge_signed_urls: bool = _truthy(os.getenv("ENABLE_EDGE_SIGNED_URLS", "false"))
-
-    # Field ops tuning: how long until a device is considered "offline".
-    #
-    # This value is used when building the Postgres mart view:
-    #   marts_edge_telemetry_device_status
-    #
-    # Default (10 minutes) is intentionally conservative.
-    edge_offline_threshold_seconds: int = int(os.getenv("EDGE_OFFLINE_THRESHOLD_SECONDS", "600"))
 
     drift_policy_default: str = os.getenv("DRIFT_POLICY_DEFAULT", "warn").lower()  # warn|fail|allow
     max_file_mb: int = int(os.getenv("MAX_FILE_MB", "50"))
@@ -231,14 +177,5 @@ def normalize_ingest_auth_mode(mode: str) -> str:
 
     m = (mode or "").strip().lower()
     if m in ("token", "shared_secret", "shared-secret"):
-        return "token"
-    return "none"
-
-
-def normalize_edge_auth_mode(mode: str) -> str:
-    """Normalize edge device auth mode."""
-
-    m = (mode or "").strip().lower()
-    if m in ("token", "device", "device_token", "device-token", "per_device", "per-device"):
         return "token"
     return "none"

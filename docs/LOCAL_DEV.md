@@ -57,7 +57,7 @@ Run a fast end-to-end smoke check:
 make smoke
 ```
 
-This brings up `api`, `worker`, `postgres`, and `redis`, verifies key API + SPA routes, seeds `edge_telemetry`, and waits for the `device_status` mart to become queryable.
+This brings up `api`, `worker`, `postgres`, and `redis`, verifies key API + SPA routes, seeds `parcels`, and waits for a parcels mart to become queryable.
 
 ### Data directory permissions (Compose lane)
 
@@ -85,12 +85,6 @@ Optional watcher:
 
 ```bash
 make watch
-```
-
-Optional edge-agent (simulated RPi telemetry):
-
-```bash
-make edge-up
 ```
 
 UI: `http://localhost:8081`

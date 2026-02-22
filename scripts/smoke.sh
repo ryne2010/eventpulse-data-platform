@@ -27,6 +27,7 @@ fi
 echo "== Smoke: checking API + SPA routes at ${BASE_URL} =="
 if ! SMOKE_BASE_URL="${BASE_URL}" python3 - <<'PY'
 import json
+import http.client
 import os
 import time
 import urllib.error
@@ -34,14 +35,27 @@ import urllib.request
 
 base = os.environ["SMOKE_BASE_URL"].rstrip("/")
 
-for path in ["/api/healthz", "/api/meta", "/api/stats?hours=24", "/", "/devices", "/media"]:
-    with urllib.request.urlopen(base + path, timeout=10) as resp:
-        print(path, resp.status)
-        if resp.status != 200:
-            raise SystemExit(f"unexpected status for {path}: {resp.status}")
+def wait_for_status(path: str, expected: int = 200, timeout_seconds: int = 30) -> None:
+    deadline = time.time() + timeout_seconds
+    last_error: str | None = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(base + path, timeout=10) as resp:
+                print(path, resp.status)
+                if resp.status == expected:
+                    return
+                last_error = f"unexpected status: {resp.status}"
+        except (urllib.error.URLError, http.client.RemoteDisconnected) as exc:
+            last_error = str(exc)
+        time.sleep(1)
+    raise SystemExit(f"{path} failed to return {expected} within {timeout_seconds}s ({last_error})")
+
+
+for path in ["/api/healthz", "/api/meta", "/api/stats?hours=24", "/", "/datasets", "/products"]:
+    wait_for_status(path, expected=200, timeout_seconds=30)
 
 seed_req = urllib.request.Request(
-    f"{base}/api/demo/seed/edge_telemetry?limit=120&per_ingestion_max=120",
+    f"{base}/api/demo/seed/parcels?limit=60&per_ingestion_max=15",
     method="POST",
 )
 with urllib.request.urlopen(seed_req, timeout=30) as resp:
@@ -53,12 +67,12 @@ last_status = None
 while time.time() < deadline:
     try:
         with urllib.request.urlopen(
-            f"{base}/api/datasets/edge_telemetry/marts/device_status?limit=5",
+            f"{base}/api/datasets/parcels/marts/sales_by_year?limit=5",
             timeout=10,
         ) as resp:
             body = json.loads(resp.read().decode("utf-8"))
             print(
-                "/api/datasets/edge_telemetry/marts/device_status?limit=5",
+                "/api/datasets/parcels/marts/sales_by_year?limit=5",
                 resp.status,
                 f"rows={len(body.get('rows', []))}",
             )
@@ -70,7 +84,7 @@ while time.time() < deadline:
             raise
     time.sleep(1)
 
-raise SystemExit(f"device_status mart not ready within 45s (last status={last_status})")
+raise SystemExit(f"parcels sales_by_year mart not ready within 45s (last status={last_status})")
 PY
 then
 	echo "Smoke route checks failed. Recent api/worker logs:"

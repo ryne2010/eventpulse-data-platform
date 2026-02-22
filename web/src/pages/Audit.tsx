@@ -156,9 +156,9 @@ export function AuditPage() {
 
             <div className="space-y-1">
               <Label>Actor</Label>
-              <Input value={actor} onChange={(e) => setActor(e.target.value)} placeholder="optional (device_id, user…)" />
+              <Input value={actor} onChange={(e) => setActor(e.target.value)} placeholder="optional (user, service…)" />
               <div className="text-xs text-muted-foreground">
-                Useful for device triage (e.g. <span className="font-mono">device.enrolled</span> events).
+                Useful for filtering service automation and operator activity.
               </div>
             </div>
 

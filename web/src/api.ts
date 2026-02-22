@@ -48,15 +48,6 @@ export type Meta = {
     task_auth_mode: 'token' | 'iam' | string
     ingest_auth_mode?: 'none' | 'token' | string
     ingest_token_configured?: boolean
-    edge_auth_mode?: 'none' | 'token' | string
-    edge_allowed_datasets?: string[]
-    enable_edge_signed_urls?: boolean
-    enable_edge_media?: boolean
-    edge_media_gcs_bucket?: string
-    edge_media_gcs_prefix?: string
-    edge_media_allowed_exts?: string[]
-    edge_enroll_enabled?: boolean
-    edge_offline_threshold_seconds?: number
     enable_signed_urls: boolean
     signed_url_expires_seconds: number
     require_signed_url_sha256?: boolean
@@ -79,56 +70,6 @@ export type DbStats = {
   captured_at: string
   database: { name: string; size_bytes: number }
   tables: DbTableStat[]
-}
-
-export type DeviceInfo = {
-  device_id: string
-  label?: string | null
-  metadata?: Record<string, any> | null
-  token_updated_at?: string | null
-  token_iterations?: number | null
-  created_at?: string | null
-  updated_at?: string | null
-  revoked_at?: string | null
-  last_seen_at?: string | null
-  last_seen_ip?: string | null
-  last_user_agent?: string | null
-}
-
-export type DeviceLatestReading = {
-  device_id: string
-  sensor: string
-  ts?: string | null
-  value?: number | null
-  units?: string | null
-  lat?: number | null
-  lon?: number | null
-  battery_v?: number | null
-  rssi_dbm?: number | null
-  firmware_version?: string | null
-  status?: string | null
-  message?: string | null
-  severity_num?: number | null
-  severity?: string | null
-  alert_type?: string | null
-  _loaded_at?: string | null
-  _ingestion_id?: string | null
-}
-
-
-
-export type DeviceMediaItem = {
-  id: string
-  device_id: string
-  media_type: 'image' | 'video' | string
-  gcs_bucket: string
-  object_name: string
-  gcs_uri: string
-  content_type?: string | null
-  bytes?: number | null
-  captured_at?: string | null
-  notes?: string | null
-  created_at: string
 }
 export type PruneRequest = {
   dry_run?: boolean
@@ -504,62 +445,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload ?? {}),
     }),
-
-  // Devices (internal admin)
-  listDevices: (limit = 200) =>
-    jsonFetch<{ ok: boolean; devices: DeviceInfo[]; limit: number }>(`/internal/admin/devices?limit=${limit}`),
-  getDevice: (device_id: string) =>
-    jsonFetch<{ ok: boolean; device: DeviceInfo }>(`/internal/admin/devices/${encodeURIComponent(device_id)}`),
-  deviceTelemetry: (device_id: string, limit = 200) =>
-    jsonFetch<{ ok: boolean; device_id: string; rows: Record<string, any>[]; limit: number; table_exists: boolean }>(
-      `/internal/admin/devices/${encodeURIComponent(device_id)}/telemetry?limit=${limit}`,
-    ),
-  deviceLatestReadings: (device_id: string, limit = 200) =>
-    jsonFetch<{ ok: boolean; device_id: string; rows: DeviceLatestReading[]; limit: number; view_exists: boolean }>(
-      `/internal/admin/devices/${encodeURIComponent(device_id)}/latest_readings?limit=${limit}`,
-    ),
-  createDevice: (payload: { device_id: string; label?: string; metadata?: Record<string, any> }) =>
-    jsonFetch<{ ok: boolean; device: DeviceInfo; device_token: string }>('/internal/admin/devices', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  rotateDeviceToken: (device_id: string) =>
-    jsonFetch<{ ok: boolean; device_id: string; device_token: string }>(
-      `/internal/admin/devices/${encodeURIComponent(device_id)}/rotate_token`,
-      { method: 'POST' },
-    ),
-  revokeDevice: (device_id: string) =>
-    jsonFetch<{ ok: boolean; device_id: string; revoked: boolean }>(
-      `/internal/admin/devices/${encodeURIComponent(device_id)}/revoke`,
-      { method: 'POST' },
-    ),
-
-
-
-
-  // Media (internal admin)
-  listMedia: (limit = 200, device_id?: string) => {
-    const params = new URLSearchParams({ limit: String(limit) })
-    if (device_id) params.set('device_id', device_id)
-    return jsonFetch<{ ok: boolean; items: DeviceMediaItem[]; limit: number; device_id?: string }>(
-      `/internal/admin/media?${params.toString()}`,
-    )
-  },
-
-  getMedia: (media_id: string) =>
-    jsonFetch<{ ok: boolean; item: DeviceMediaItem }>(
-      `/internal/admin/media/${encodeURIComponent(media_id)}`,
-    ),
-
-  mediaReadSignedUrl: (gcs_uri: string, expires_in_seconds = 300) =>
-    jsonFetch<{ ok: boolean; download_url: string; expires_in_seconds: number }>(
-      '/internal/admin/media/gcs_read_signed_url',
-      { method: 'POST', body: JSON.stringify({ gcs_uri, expires_in_seconds }) },
-    ),
   // Demo
   seedParcels: (limit = 50) =>
     jsonFetch<SeedResponse>(`/api/demo/seed/parcels?limit=${limit}&per_ingestion_max=15`, { method: 'POST' }),
-
-  seedEdgeTelemetry: (limit = 200) =>
-    jsonFetch<SeedResponse>(`/api/demo/seed/edge_telemetry?limit=${limit}&per_ingestion_max=200`, { method: 'POST' }),
 }

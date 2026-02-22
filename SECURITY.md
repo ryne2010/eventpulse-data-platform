@@ -18,7 +18,7 @@ Recommended posture:
 ## Secrets
 
 - Local dev: `.env` (never commit)
-- Cloud: **Secret Manager** for `DATABASE_URL`, `REDIS_URL`, and any API keys
+- Cloud: **Secret Manager** for `DATABASE_URL`, `TASK_TOKEN`, `INGEST_TOKEN`, and any API keys
 
 ---
 
@@ -30,15 +30,8 @@ Treat write/ingest paths as privileged:
 - `POST /api/ingest/from_gcs`
 - `POST /api/uploads/gcs_signed_url`
 
-Edge (field device) endpoints should also be treated as privileged:
-
-- `POST /api/edge/ingest/upload`
-- `POST /api/edge/ingest/from_gcs`
-- `POST /api/edge/uploads/gcs_signed_url`
-- `POST /api/edge/enroll` (if enabled)
-
 Recommended deployment pattern:
-- keep Cloud Run **private** (no unauthenticated invoker)
+- keep Cloud Run **private** (no unauthenticated invoker) for production
 - front it with a real identity layer (IAP / OAuth / a gateway) for human access
 - allow Cloud Tasks / Pub/Sub to invoke internal endpoints via OIDC
 
@@ -61,14 +54,14 @@ If you enable **signed URLs** or **event-driven ingestion**, prefer `TASK_AUTH_M
 
 ---
 
-## Field device auth
+## Ingest auth
 
-Recommended runtime model: **per-device tokens** (`EDGE_AUTH_MODE=token`).
+For direct upload endpoints, use token mode when traffic is not behind an identity boundary:
 
-Optional convenience (for faster deployments): set `EDGE_ENROLL_TOKEN` to enable `POST /api/edge/enroll`.
+- `INGEST_AUTH_MODE=token`
+- `INGEST_TOKEN` stored in Secret Manager
 
-- Treat `EDGE_ENROLL_TOKEN` like a fleet secret (Secret Manager; rotate on compromise)
-- Consider rate limiting and network allowlists when feasible (start lean; add a WAF/edge controls later if needed)
+For large-file and production workflows, prefer direct-to-GCS signed URLs and keep internal auth enabled.
 
 ---
 
@@ -85,6 +78,6 @@ Optional convenience (for faster deployments): set `EDGE_ENROLL_TOKEN` to enable
 
 The API sets conservative security headers (e.g., `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`).
 
-If you need stricter controls (CSP, WAF rules, geo/IP allowlists), it’s usually best to enforce them at the edge (load balancer / gateway) rather than in-app.
+If you need stricter controls (CSP, WAF rules, geo/IP allowlists), enforce them at the ingress/load-balancer layer rather than in-app.
 
 This repo intentionally starts **without** Cloud Armor to keep costs and complexity low; it can be added later if/when you need DDoS/WAF features.

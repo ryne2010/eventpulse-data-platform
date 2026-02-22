@@ -7,7 +7,7 @@ This is a pragmatic incident guide for EventPulse running on:
 - GCS (raw landing)
 - Optional Cloud Tasks async processing
 
-It is intentionally lightweight for a small team / field deployment.
+It is intentionally lightweight for a small team.
 
 ## Phases
 
@@ -51,7 +51,7 @@ It is intentionally lightweight for a small team / field deployment.
 
 ### Cloud Run
 
-- `GET /healthz` (Cloud Run URL)
+- `GET /api/healthz` (Cloud Run URL)
 - `GET /api/meta` (confirm runtime flags + storage backend)
 - Cloud Run logs:
   - elevated 5xx
@@ -74,10 +74,8 @@ It is intentionally lightweight for a small team / field deployment.
 - raw bucket writes succeeding?
 - object finalize events arriving?
 
-### Field devices
+### Ingestion pipeline
 
-- Devices page: are many devices suddenly offline?
-- Is `EDGE_OFFLINE_THRESHOLD_SECONDS` set appropriately for the upload cadence?
-- If enrollment is failing:
-  - confirm `EDGE_ENROLL_TOKEN` secret is present
-  - check `/api/edge/enroll` logs
+- are new ingestion rows being created?
+- are ingestions stuck in `PROCESSING` without heartbeats?
+- does `POST /internal/admin/reclaim_stuck` recover stale jobs?
