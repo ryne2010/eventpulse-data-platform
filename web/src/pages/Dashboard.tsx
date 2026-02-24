@@ -5,6 +5,8 @@ import { Link } from '@tanstack/react-router'
 import { api } from '../api'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, DataTable, Page, Separator } from '../portfolio-ui'
 
+type AnalyticsSaleRow = Record<string, any>
+
 function fmtPct(v: number | null | undefined) {
   if (v === null || v === undefined) return '—'
   return `${(v * 100).toFixed(1)}%`
@@ -211,6 +213,80 @@ function PriceBarList(props: {
   )
 }
 
+function DetailItem(props: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="space-y-1 rounded-md border bg-muted/20 p-3">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{props.label}</div>
+      <div className="text-sm">{props.value}</div>
+    </div>
+  )
+}
+
+function SaleDetailDialog(props: {
+  open: boolean
+  title: string
+  subtitle?: string
+  row: AnalyticsSaleRow | null
+  onClose: () => void
+}) {
+  React.useEffect(() => {
+    if (!props.open) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') props.onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [props.open, props.onClose])
+
+  if (!props.open || !props.row) return null
+
+  const row = props.row
+  const salePrice = Number(row?.sale_price)
+  const pricePerAcre = Number(row?.price_per_acre)
+  const pricePerSf = Number(row?.price_per_sf)
+  const saleYear = Number(row?.sale_year)
+  const yearBuilt = Number(row?.year_built)
+  const lotSqft = Number(row?.lot_sqft)
+  const acres = Number.isFinite(lotSqft) && lotSqft > 0 ? lotSqft / 43560 : null
+  const buildingSqft = Number(row?.building_sqft)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" onClick={props.onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Sale detail"
+        className="w-full max-w-3xl rounded-lg border bg-background shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b p-4">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold">{props.title}</h2>
+            {props.subtitle ? <p className="text-sm text-muted-foreground">{props.subtitle}</p> : null}
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={props.onClose}>
+            Close
+          </Button>
+        </div>
+
+        <div className="grid gap-3 p-4 md:grid-cols-2">
+          <DetailItem label="Parcel ID" value={String(row?.parcel_id ?? '—')} />
+          <DetailItem label="Land Type" value={String(row?.land_type ?? '—')} />
+          <DetailItem label="Sale Date" value={fmtDate(String(row?.sale_date ?? ''))} />
+          <DetailItem label="Sale Year" value={Number.isFinite(saleYear) && saleYear > 0 ? fmtInt(saleYear) : '—'} />
+          <DetailItem label="Sale Price" value={<span className="font-mono">{Number.isFinite(salePrice) && salePrice > 0 ? fmtUsd(salePrice, 0) : '—'}</span>} />
+          <DetailItem label="$/Acre" value={<span className="font-mono">{Number.isFinite(pricePerAcre) && pricePerAcre > 0 ? fmtUsd(pricePerAcre, 0) : '—'}</span>} />
+          <DetailItem label="$/SF" value={<span className="font-mono">{Number.isFinite(pricePerSf) && pricePerSf > 0 ? fmtUsd(pricePerSf, 2) : '—'}</span>} />
+          <DetailItem label="Year Built" value={Number.isFinite(yearBuilt) && yearBuilt > 0 ? fmtInt(yearBuilt) : '—'} />
+          <DetailItem label="Building SF" value={Number.isFinite(buildingSqft) && buildingSqft > 0 ? fmtInt(buildingSqft) : '—'} />
+          <DetailItem label="Lot SF" value={Number.isFinite(lotSqft) && lotSqft > 0 ? fmtInt(lotSqft) : '—'} />
+          <DetailItem label="Lot Acres" value={acres === null ? '—' : acres.toFixed(2)} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function DashboardPage() {
   const metaQ = useQuery({ queryKey: ['meta'], queryFn: api.meta })
   const statsQ = useQuery({ queryKey: ['stats', 24], queryFn: () => api.stats(24), refetchInterval: 5000 })
@@ -237,6 +313,11 @@ export function DashboardPage() {
   const [selectedLandType, setSelectedLandType] = React.useState<string | null>(null)
   const [selectedYearBuilt, setSelectedYearBuilt] = React.useState<string | null>(null)
   const [selectedSaleYear, setSelectedSaleYear] = React.useState<string | null>(null)
+  const [selectedSaleRow, setSelectedSaleRow] = React.useState<{
+    title: string
+    subtitle?: string
+    row: AnalyticsSaleRow
+  } | null>(null)
 
   const landTypeSalesQ = useQuery({
     queryKey: ['analytics-sales', 'parcels', 'land_type', selectedLandType, 80],
@@ -409,7 +490,19 @@ export function DashboardPage() {
             {selectedLandType && landTypeSalesQ.isError ? <div className="text-sm text-destructive">Failed to load sales.</div> : null}
             {selectedLandType && !landTypeSalesQ.isLoading && !landTypeSalesQ.isError ? (
               (landTypeSalesQ.data?.rows?.length ?? 0) > 0 ? (
-                <DataTable data={landTypeSalesQ.data?.rows ?? []} columns={pricePerAcreColumns} height={260} columnMinWidth={140} />
+                <DataTable
+                  data={landTypeSalesQ.data?.rows ?? []}
+                  columns={pricePerAcreColumns}
+                  height={260}
+                  columnMinWidth={140}
+                  onRowClick={(row) =>
+                    setSelectedSaleRow({
+                      title: `Parcel ${String(row?.parcel_id ?? 'sale')}`,
+                      subtitle: selectedLandType ? `Land type: ${selectedLandType}` : undefined,
+                      row,
+                    })
+                  }
+                />
               ) : (
                 <div className="text-sm text-muted-foreground">No matching sales for this bucket yet.</div>
               )
@@ -442,7 +535,19 @@ export function DashboardPage() {
             {selectedYearBuilt && yearBuiltSalesQ.isError ? <div className="text-sm text-destructive">Failed to load sales.</div> : null}
             {selectedYearBuilt && !yearBuiltSalesQ.isLoading && !yearBuiltSalesQ.isError ? (
               (yearBuiltSalesQ.data?.rows?.length ?? 0) > 0 ? (
-                <DataTable data={yearBuiltSalesQ.data?.rows ?? []} columns={pricePerSfColumns} height={260} columnMinWidth={140} />
+                <DataTable
+                  data={yearBuiltSalesQ.data?.rows ?? []}
+                  columns={pricePerSfColumns}
+                  height={260}
+                  columnMinWidth={140}
+                  onRowClick={(row) =>
+                    setSelectedSaleRow({
+                      title: `Parcel ${String(row?.parcel_id ?? 'sale')}`,
+                      subtitle: selectedYearBuilt ? `Year built: ${selectedYearBuilt}` : undefined,
+                      row,
+                    })
+                  }
+                />
               ) : (
                 <div className="text-sm text-muted-foreground">No matching sales for this bucket yet.</div>
               )
@@ -474,7 +579,19 @@ export function DashboardPage() {
             {selectedSaleYear && saleYearSalesQ.isError ? <div className="text-sm text-destructive">Failed to load sales.</div> : null}
             {selectedSaleYear && !saleYearSalesQ.isLoading && !saleYearSalesQ.isError ? (
               (saleYearSalesQ.data?.rows?.length ?? 0) > 0 ? (
-                <DataTable data={saleYearSalesQ.data?.rows ?? []} columns={pricePerSfColumns} height={260} columnMinWidth={140} />
+                <DataTable
+                  data={saleYearSalesQ.data?.rows ?? []}
+                  columns={pricePerSfColumns}
+                  height={260}
+                  columnMinWidth={140}
+                  onRowClick={(row) =>
+                    setSelectedSaleRow({
+                      title: `Parcel ${String(row?.parcel_id ?? 'sale')}`,
+                      subtitle: selectedSaleYear ? `Sale year: ${selectedSaleYear}` : undefined,
+                      row,
+                    })
+                  }
+                />
               ) : (
                 <div className="text-sm text-muted-foreground">No matching sales for this bucket yet.</div>
               )
@@ -518,6 +635,14 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      <SaleDetailDialog
+        open={Boolean(selectedSaleRow)}
+        title={selectedSaleRow?.title ?? ''}
+        subtitle={selectedSaleRow?.subtitle}
+        row={selectedSaleRow?.row ?? null}
+        onClose={() => setSelectedSaleRow(null)}
+      />
     </Page>
   )
 }

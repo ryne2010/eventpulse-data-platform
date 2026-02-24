@@ -16,7 +16,7 @@ It’s designed to be easy to understand, easy to run locally on an **M2 Max Mac
 
 ---
 
-## Quickstart (local, Docker Compose)
+## Quickstart (local)
 
 ### Prereqs
 
@@ -28,23 +28,33 @@ Optional (for running tooling outside Docker): `uv`, `node`, `pnpm`.
 ### Run
 
 ```bash
-cp .env.example .env
-make up
+make dev
 ```
 
-If you prefer a hybrid loop (DB/Redis in Docker, API on your host), use:
+`make dev` is the hot-reload loop:
+
+- runs a local `reset` first (cleans local volumes/data)
+- starts Postgres + Redis in Docker
+- runs API (`uvicorn --reload`), worker (`rq.SimpleWorker`), and Vite (`pnpm -C web dev`) on your host
+- seeds parcels demo data and waits for marts
+- keeps running until you press `Ctrl-C`
+
+It loads host env vars from `.env.host` (creates from `.env.host.example` if missing).
+
+If you only want to start services (without seeding/checks), use:
 
 ```bash
-cp .env.host.example .env
+make up
 ```
 
 See `docs/LOCAL_DEV.md` for both workflows.
 
-Optional: set `TASK_TOKEN` in `.env` to enable internal endpoints (signed uploads, from_gcs backfills, incoming listing, and contract editing).
+Optional: set `TASK_TOKEN` in `.env.host` to enable internal endpoints (signed uploads, from_gcs backfills, incoming listing, and contract editing).
 
 Open:
 
-- UI: `http://localhost:8081`
+- UI (Vite): `http://localhost:5174`
+- API: `http://localhost:8081`
 - API health: `http://localhost:8081/health` (alias: `/api/healthz`)
 - API runtime meta: `http://localhost:8081/api/meta`
 

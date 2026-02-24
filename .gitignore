@@ -15,6 +15,7 @@ web/dist/
 
 # Local env (never commit secrets)
 .env
+.env.host
 
 # Runtime data (keep contracts + samples, ignore generated state)
 data/pg/

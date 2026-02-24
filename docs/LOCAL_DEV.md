@@ -4,7 +4,7 @@ This repo supports two common workflows.
 
 ---
 
-## Option A: Docker Compose (recommended)
+## Option A: Docker Compose (single-service parity)
 
 Copy the example env file:
 
@@ -91,7 +91,29 @@ UI: `http://localhost:8081`
 
 ---
 
-## Option B: Hybrid (containers for DB/Redis, run API locally)
+## Option B: Hot-reload dev loop (recommended for iteration)
+
+One command:
+
+```bash
+make dev
+```
+
+`make dev` does all of this:
+
+- runs `make reset` (clean local DB/data)
+- starts Docker `postgres` + `redis`
+- loads `.env.host` (creates it from `.env.host.example` if needed)
+- starts API with `--reload` on `http://localhost:8081`
+- starts worker on host (`rq.SimpleWorker` for macOS-safe local execution)
+- starts Vite dev server on `http://localhost:5174`
+- seeds parcels demo data and waits for analytics marts
+
+Press `Ctrl-C` to stop host processes and bring down Docker dependencies.
+
+---
+
+## Option C: Manual hybrid (containers for DB/Redis, run API locally)
 
 This is often faster for Python iteration.
 
@@ -109,7 +131,7 @@ uv sync --dev
 
 3) Configure env vars (choose one):
 
-**Option B1 (quick): export env vars**
+**Option C1 (quick): export env vars**
 
 ```bash
 export DATABASE_URL='postgresql://postgres:eventpulse@localhost:5432/eventpulse'
@@ -121,11 +143,11 @@ export INCOMING_DIR='./data/incoming'
 export ARCHIVE_DIR='./data/archive'
 ```
 
-**Option B2 (repeatable): use the host template**
+**Option C2 (repeatable): use the host template**
 
 ```bash
-cp .env.host.example .env
-set -a; source .env; set +a
+cp .env.host.example .env.host
+set -a; source .env.host; set +a
 ```
 
 4) Run the API:
@@ -137,7 +159,7 @@ uv run uvicorn eventpulse.api_server:app --reload --port 8081
 5) Run the worker:
 
 ```bash
-uv run rq worker eventpulse --url $REDIS_URL
+uv run rq worker --url $REDIS_URL --worker-class rq.SimpleWorker eventpulse
 ```
 
 ---

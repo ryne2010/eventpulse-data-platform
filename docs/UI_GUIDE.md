@@ -13,6 +13,7 @@ This UI is intentionally small (React + Vite + TanStack Router/Query) but it aim
   - median `$ / sf` by year built
   - median `$ / sf` by sale year
   - click any analytics bar to drill into matching sale rows
+  - click any sale row to open a detail dialog
 - Dataset shortlist (with curated/contract badges)
 - Quick actions (Upload, open parcels, seed demo data)
 
