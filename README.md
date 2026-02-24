@@ -51,6 +51,7 @@ Open:
 In the UI, use the top nav:
 
 - **Dashboard** — status totals, backlog, and quick actions
+  - plus real-estate analytics for parcels (`$/acre by land type`, `$/sf by year built`, `$/sf by sale year`) with click-to-drill sales rows
 - **Ingestions** — browse events; click through to quality/drift/lineage/audit
 - **Datasets** — contract explorer/editor, schema history, curated sample, and marts
 - **Products** — catalog of published marts (consumption layer)

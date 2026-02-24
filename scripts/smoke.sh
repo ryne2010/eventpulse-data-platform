@@ -29,6 +29,7 @@ if ! SMOKE_BASE_URL="${BASE_URL}" python3 - <<'PY'
 import json
 import http.client
 import os
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -45,7 +46,14 @@ def wait_for_status(path: str, expected: int = 200, timeout_seconds: int = 30) -
                 if resp.status == expected:
                     return
                 last_error = f"unexpected status: {resp.status}"
-        except (urllib.error.URLError, http.client.RemoteDisconnected) as exc:
+        except (
+            urllib.error.URLError,
+            http.client.RemoteDisconnected,
+            ConnectionResetError,
+            TimeoutError,
+            socket.timeout,
+            OSError,
+        ) as exc:
             last_error = str(exc)
         time.sleep(1)
     raise SystemExit(f"{path} failed to return {expected} within {timeout_seconds}s ({last_error})")
@@ -64,6 +72,7 @@ with urllib.request.urlopen(seed_req, timeout=30) as resp:
 
 deadline = time.time() + 45
 last_status = None
+mart_ready = False
 while time.time() < deadline:
     try:
         with urllib.request.urlopen(
@@ -77,14 +86,51 @@ while time.time() < deadline:
                 f"rows={len(body.get('rows', []))}",
             )
             if resp.status == 200:
-                raise SystemExit(0)
+                mart_ready = True
+                break
     except urllib.error.HTTPError as exc:
         last_status = exc.code
         if exc.code != 404:
             raise
     time.sleep(1)
 
-raise SystemExit(f"parcels sales_by_year mart not ready within 45s (last status={last_status})")
+if not mart_ready:
+    raise SystemExit(f"parcels sales_by_year mart not ready within 45s (last status={last_status})")
+
+deadline = time.time() + 45
+last_status = None
+analytics_mart_ready = False
+while time.time() < deadline:
+    try:
+        with urllib.request.urlopen(
+            f"{base}/api/datasets/parcels/marts/price_per_acre_by_land_type?limit=10",
+            timeout=10,
+        ) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            print(
+                "/api/datasets/parcels/marts/price_per_acre_by_land_type?limit=10",
+                resp.status,
+                f"rows={len(body.get('rows', []))}",
+            )
+            if resp.status == 200:
+                rows = body.get("rows", [])
+                by_type = {str(r.get("land_type")): float(r.get("median_price_per_acre") or 0) for r in rows}
+                if not {"grassland", "dry farmland", "irrigated farmland"}.issubset(set(by_type.keys())):
+                    raise SystemExit("missing expected land_type buckets in price_per_acre mart")
+                if any(v <= 0 for v in by_type.values()):
+                    raise SystemExit("invalid non-positive median $/acre in mart response")
+                analytics_mart_ready = True
+                break
+    except urllib.error.HTTPError as exc:
+        last_status = exc.code
+        if exc.code != 404:
+            raise
+    time.sleep(1)
+
+if not analytics_mart_ready:
+    raise SystemExit(f"parcels price_per_acre_by_land_type mart not ready within 45s (last status={last_status})")
+
+raise SystemExit(0)
 PY
 then
 	echo "Smoke route checks failed. Recent api/worker logs:"

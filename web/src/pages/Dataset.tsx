@@ -2,6 +2,7 @@ import React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
+import { CircleMarker, MapContainer, Popup, TileLayer, useMap } from 'react-leaflet'
 import {
   api,
   type ContractValidateResponse,
@@ -28,6 +29,7 @@ import {
   Tabs,
   Textarea,
 } from '../portfolio-ui'
+import 'leaflet/dist/leaflet.css'
 
 function fmtTime(iso?: string | null) {
   if (!iso) return '—'
@@ -111,17 +113,34 @@ function computeContractDiff(contract: DatasetContractResponse['contract'] | nul
   return { missing_in_observed: missing, extra_in_observed: extra, type_mismatches: typeMismatches }
 }
 
-function GeoScatter(props: { rows: Record<string, any>[]; height?: number }) {
-  const canvasRef = React.useRef<HTMLCanvasElement | null>(null)
-  const height = props.height ?? 420
+const SPRINGFIELD_CENTER: [number, number] = [37.4086, -102.6143]
+const SPRINGFIELD_ZOOM = 11
 
-  const points = React.useMemo(() => {
-    const out: { lat: number; lon: number; metric?: number | null }[] = []
+type GeoPoint = {
+  lat: number
+  lon: number
+  metric: number | null
+}
+
+function GeoViewport() {
+  const map = useMap()
+
+  React.useEffect(() => {
+    map.setView(SPRINGFIELD_CENTER, SPRINGFIELD_ZOOM)
+  }, [map])
+
+  return null
+}
+
+function GeoScatter(props: { rows: Record<string, any>[]; height?: number }) {
+  const height = props.height ?? 460
+
+  const points = React.useMemo<GeoPoint[]>(() => {
+    const out: GeoPoint[] = []
     for (const r of props.rows ?? []) {
       const lat = Number(r.lat)
       const lon = Number(r.lon)
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
-      // Generic metric for point sizing (parcels: sale_price, telemetry: value)
       const metricRaw = (r as any).sale_price ?? (r as any).value
       const metric = metricRaw === null || metricRaw === undefined ? null : Number(metricRaw)
       out.push({ lat, lon, metric: Number.isFinite(metric as any) ? (metric as number) : null })
@@ -129,85 +148,60 @@ function GeoScatter(props: { rows: Record<string, any>[]; height?: number }) {
     return out
   }, [props.rows])
 
-  React.useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+  const metricMax = React.useMemo(() => Math.max(0, ...points.map((p) => p.metric ?? 0)), [points])
 
-    const dpr = window.devicePixelRatio || 1
-    const width = canvas.clientWidth
-    const h = canvas.clientHeight
-
-    canvas.width = Math.floor(width * dpr)
-    canvas.height = Math.floor(h * dpr)
-    ctx.scale(dpr, dpr)
-
-    ctx.clearRect(0, 0, width, h)
-
-    if (!points.length) {
-      ctx.fillStyle = 'rgba(0,0,0,0.55)'
-      ctx.font = '14px ui-sans-serif, system-ui'
-      ctx.fillText('No geo points available yet.', 12, 24)
-      return
-    }
-
-    const lats = points.map((p) => p.lat)
-    const lons = points.map((p) => p.lon)
-    const minLat = Math.min(...lats)
-    const maxLat = Math.max(...lats)
-    const minLon = Math.min(...lons)
-    const maxLon = Math.max(...lons)
-
-    const pad = 18
-    const usableW = Math.max(1, width - pad * 2)
-    const usableH = Math.max(1, h - pad * 2)
-
-    const toX = (lon: number) => {
-      if (maxLon === minLon) return width / 2
-      return pad + ((lon - minLon) / (maxLon - minLon)) * usableW
-    }
-
-    const toY = (lat: number) => {
-      if (maxLat === minLat) return h / 2
-      // invert so north is up
-      return pad + (1 - (lat - minLat) / (maxLat - minLat)) * usableH
-    }
-
-    // frame
-    ctx.strokeStyle = 'rgba(0,0,0,0.20)'
-    ctx.lineWidth = 1
-    ctx.strokeRect(pad, pad, usableW, usableH)
-
-    // points
-    for (const p of points) {
-      const x = toX(p.lon)
-      const y = toY(p.lat)
-
-      // Scale point radius by metric (log-ish), but keep it subtle.
-      const metric = (p as any).metric ?? 0
-      const r = metric > 0 ? Math.max(1.5, Math.min(4.5, Math.log10(metric + 10))) : 1.8
-
-      ctx.fillStyle = 'rgba(59, 130, 246, 0.55)'
-      ctx.beginPath()
-      ctx.arc(x, y, r, 0, Math.PI * 2)
-      ctx.fill()
-    }
-
-    // caption
-    ctx.fillStyle = 'rgba(0,0,0,0.60)'
-    ctx.font = '12px ui-sans-serif, system-ui'
-    ctx.fillText(`points: ${points.length}   lat: ${minLat.toFixed(3)}…${maxLat.toFixed(3)}   lon: ${minLon.toFixed(3)}…${maxLon.toFixed(3)}`, 12, h - 10)
-  }, [points])
+  const markerRadius = React.useCallback(
+    (metric: number | null) => {
+      if (metric === null || metricMax <= 0) return 4
+      const scaled = Math.log10(metric + 10) / Math.log10(metricMax + 10)
+      return Math.max(3, Math.min(11, 3 + scaled * 8))
+    },
+    [metricMax]
+  )
 
   return (
     <div className="w-full">
-      <div className="rounded-md border bg-muted/10 overflow-hidden">
-        <canvas ref={canvasRef} className="w-full" style={{ height }} />
+      <div className="rounded-md border overflow-hidden">
+        <MapContainer
+          center={SPRINGFIELD_CENTER}
+          zoom={SPRINGFIELD_ZOOM}
+          scrollWheelZoom
+          style={{ height, width: '100%' }}
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          <GeoViewport />
+          {points.map((p, idx) => (
+            <CircleMarker
+              key={`${p.lat}:${p.lon}:${idx}`}
+              center={[p.lat, p.lon]}
+              radius={markerRadius(p.metric)}
+              pathOptions={{
+                color: '#2563eb',
+                fillColor: '#3b82f6',
+                fillOpacity: 0.45,
+                weight: 1,
+              }}
+            >
+              <Popup>
+                <div className="text-xs space-y-1">
+                  <div>
+                    <span className="font-medium">lat/lon:</span> {p.lat.toFixed(5)}, {p.lon.toFixed(5)}
+                  </div>
+                  {p.metric !== null ? (
+                    <div>
+                      <span className="font-medium">metric:</span> {p.metric.toLocaleString()}
+                    </div>
+                  ) : null}
+                </div>
+              </Popup>
+            </CircleMarker>
+          ))}
+        </MapContainer>
       </div>
-      <div className="text-xs text-muted-foreground mt-2">
-        Note: this is a lightweight scatter plot (no map tiles). It exists to demonstrate the geospatial analytics "slice" and works for any dataset with a geo_points mart.
-      </div>
+      <div className="text-xs text-muted-foreground mt-2">Interactive map with pan/zoom centered on Springfield, CO.</div>
     </div>
   )
 }
@@ -807,4 +801,3 @@ function SchemaJsonPanel(props: { schema: any }) {
     </Section>
   )
 }
-

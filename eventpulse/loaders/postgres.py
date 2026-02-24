@@ -30,6 +30,35 @@ _TYPE_MAP = {
     "timestamp": "TIMESTAMPTZ",
 }
 
+_MAX_SAMPLE_LIMIT = 2000
+
+
+def _clamp_sample_limit(limit: int) -> int:
+    """Bound row-sample limits to protect DB queries from oversized values."""
+
+    return max(1, min(int(limit), _MAX_SAMPLE_LIMIT))
+
+
+def _to_db_scalar(v: Any) -> Any:
+    """Normalize pandas/numpy scalars for psycopg2 inserts.
+
+    In particular, convert NaN/NaT/NA to None so nullable integer columns
+    don't fail with 'bigint out of range' on cast from NaN.
+    """
+
+    if v is None:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except Exception:
+        pass
+    if isinstance(v, np.generic):
+        return v.item()
+    if isinstance(v, pd.Timestamp):
+        return v.to_pydatetime()
+    return v
+
 
 def _sql_type(spec: Dict[str, Any]) -> str:
     t = (spec.get("type") or "string").lower()
@@ -155,17 +184,7 @@ def upsert_curated(
 
     all_cols = cols + ["_ingestion_id", "_loaded_at", "_source_sha256"]
 
-    def _to_python(v: Any) -> Any:
-        # psycopg2 can't adapt numpy scalar types (e.g., numpy.int64) directly.
-        if v is None:
-            return None
-        if isinstance(v, np.generic):
-            return v.item()
-        if isinstance(v, pd.Timestamp):
-            return v.to_pydatetime()
-        return v
-
-    rows = [tuple(_to_python(df[c].iloc[i]) for c in all_cols) for i in range(len(df))]
+    rows = [tuple(_to_db_scalar(df[c].iloc[i]) for c in all_cols) for i in range(len(df))]
 
     if not rows:
         return 0
@@ -205,6 +224,7 @@ def curated_table_exists(dataset: str) -> bool:
 
 def sample_curated(dataset: str, limit: int = 20) -> List[Dict[str, Any]]:
     dataset = normalize_dataset_name(dataset)
+    limit = _clamp_sample_limit(limit)
     table = f"curated_{dataset}"
     with get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -217,6 +237,7 @@ def sample_curated(dataset: str, limit: int = 20) -> List[Dict[str, Any]]:
 
 def sample_curated_for_ingestion(dataset: str, ingestion_id: str, limit: int = 20) -> List[Dict[str, Any]]:
     dataset = normalize_dataset_name(dataset)
+    limit = _clamp_sample_limit(limit)
     table = f"curated_{dataset}"
     with get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -317,6 +338,103 @@ def ensure_marts_views(dataset: str) -> None:
                 _try(
                     cur,
                     f"""
+                    CREATE OR REPLACE VIEW {_quote_ident("marts_parcels_price_per_acre_by_land_type")} AS
+                    WITH normalized AS (
+                      SELECT
+                        CASE
+                          WHEN land_use IS NULL OR btrim(land_use) = '' THEN NULL
+                          ELSE lower(btrim(land_use))
+                        END AS land_use_norm,
+                        sale_price,
+                        lot_sqft
+                      FROM {_quote_ident(curated_table)}
+                      WHERE sale_price IS NOT NULL
+                        AND lot_sqft IS NOT NULL
+                        AND lot_sqft > 0
+                    ),
+                    base AS (
+                      SELECT
+                        CASE
+                          WHEN land_use_norm IN ('grassland', 'dry farmland', 'irrigated farmland') THEN land_use_norm
+                          ELSE NULL
+                        END AS land_type,
+                        (sale_price * 43560.0 / NULLIF(lot_sqft::DOUBLE PRECISION, 0.0)) AS price_per_acre
+                      FROM normalized
+                    )
+                    SELECT
+                      land_type,
+                      COUNT(*)::BIGINT AS sales_count,
+                      AVG(price_per_acre) AS avg_price_per_acre,
+                      percentile_cont(0.25) WITHIN GROUP (ORDER BY price_per_acre) AS p25_price_per_acre,
+                      percentile_cont(0.50) WITHIN GROUP (ORDER BY price_per_acre) AS median_price_per_acre,
+                      percentile_cont(0.75) WITHIN GROUP (ORDER BY price_per_acre) AS p75_price_per_acre
+                    FROM base
+                    WHERE land_type IS NOT NULL
+                    GROUP BY 1
+                    ORDER BY median_price_per_acre DESC NULLS LAST, land_type ASC;
+                    """,
+                    "marts_parcels_price_per_acre_by_land_type",
+                )
+
+                _try(
+                    cur,
+                    f"""
+                    CREATE OR REPLACE VIEW {_quote_ident("marts_parcels_price_per_sf_by_year_built")} AS
+                    WITH base AS (
+                      SELECT
+                        year_built::INT AS year_built,
+                        (sale_price / NULLIF(building_sqft::DOUBLE PRECISION, 0.0)) AS price_per_sf
+                      FROM {_quote_ident(curated_table)}
+                      WHERE sale_price IS NOT NULL
+                        AND building_sqft IS NOT NULL
+                        AND building_sqft > 0
+                        AND year_built IS NOT NULL
+                    )
+                    SELECT
+                      year_built,
+                      COUNT(*)::BIGINT AS sales_count,
+                      AVG(price_per_sf) AS avg_price_per_sf,
+                      percentile_cont(0.25) WITHIN GROUP (ORDER BY price_per_sf) AS p25_price_per_sf,
+                      percentile_cont(0.50) WITHIN GROUP (ORDER BY price_per_sf) AS median_price_per_sf,
+                      percentile_cont(0.75) WITHIN GROUP (ORDER BY price_per_sf) AS p75_price_per_sf
+                    FROM base
+                    GROUP BY 1
+                    ORDER BY 1 ASC;
+                    """,
+                    "marts_parcels_price_per_sf_by_year_built",
+                )
+
+                _try(
+                    cur,
+                    f"""
+                    CREATE OR REPLACE VIEW {_quote_ident("marts_parcels_price_per_sf_by_sale_year")} AS
+                    WITH base AS (
+                      SELECT
+                        EXTRACT(YEAR FROM sale_date)::INT AS sale_year,
+                        (sale_price / NULLIF(building_sqft::DOUBLE PRECISION, 0.0)) AS price_per_sf
+                      FROM {_quote_ident(curated_table)}
+                      WHERE sale_price IS NOT NULL
+                        AND sale_date IS NOT NULL
+                        AND building_sqft IS NOT NULL
+                        AND building_sqft > 0
+                    )
+                    SELECT
+                      sale_year,
+                      COUNT(*)::BIGINT AS sales_count,
+                      AVG(price_per_sf) AS avg_price_per_sf,
+                      percentile_cont(0.25) WITHIN GROUP (ORDER BY price_per_sf) AS p25_price_per_sf,
+                      percentile_cont(0.50) WITHIN GROUP (ORDER BY price_per_sf) AS median_price_per_sf,
+                      percentile_cont(0.75) WITHIN GROUP (ORDER BY price_per_sf) AS p75_price_per_sf
+                    FROM base
+                    GROUP BY 1
+                    ORDER BY 1 ASC;
+                    """,
+                    "marts_parcels_price_per_sf_by_sale_year",
+                )
+
+                _try(
+                    cur,
+                    f"""
                     CREATE OR REPLACE VIEW {_quote_ident("marts_parcels_sales_by_month")} AS
                     SELECT
                       date_trunc('month', sale_date) AS month,
@@ -363,10 +481,149 @@ def view_exists(view_name: str) -> bool:
 def sample_view(view_name: str, limit: int = 200) -> List[Dict[str, Any]]:
     """Fetch rows from a view (or table) in a safe, read-only way."""
 
-    limit = max(1, min(int(limit), 2000))
+    limit = _clamp_sample_limit(limit)
     with get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(f"SELECT * FROM {_quote_ident(view_name)} LIMIT %s;", (limit,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def sample_parcels_sales_for_bucket(dimension: str, bucket: str, limit: int = 200) -> List[Dict[str, Any]]:
+    """Fetch parcel sale rows for an analytics bucket (dashboard drill-down)."""
+
+    dim = str(dimension or "").strip().lower()
+    limit = _clamp_sample_limit(limit)
+
+    if dim not in {"land_type", "year_built", "sale_year"}:
+        raise ValueError("dimension must be one of: land_type, year_built, sale_year")
+
+    curated_table = _quote_ident("curated_parcels")
+    base_sql = f"""
+        WITH base AS (
+          SELECT
+            parcel_id,
+            sale_date,
+            EXTRACT(YEAR FROM sale_date)::INT AS sale_year,
+            sale_price,
+            year_built::INT AS year_built,
+            building_sqft::BIGINT AS building_sqft,
+            lot_sqft::BIGINT AS lot_sqft,
+            CASE
+              WHEN land_use IS NULL OR btrim(land_use) = '' THEN NULL
+              ELSE lower(btrim(land_use))
+            END AS land_use_norm,
+            CASE
+              WHEN land_use IS NULL OR btrim(land_use) = '' THEN NULL
+              ELSE lower(btrim(land_use))
+            END AS land_use,
+            (sale_price * 43560.0 / NULLIF(lot_sqft::DOUBLE PRECISION, 0.0)) AS price_per_acre,
+            (sale_price / NULLIF(building_sqft::DOUBLE PRECISION, 0.0)) AS price_per_sf
+          FROM {curated_table}
+          WHERE sale_price IS NOT NULL
+        ),
+        normalized AS (
+          SELECT
+            parcel_id,
+            sale_date,
+            sale_year,
+            sale_price,
+            year_built,
+            building_sqft,
+            lot_sqft,
+            CASE
+              WHEN land_use_norm IN ('grassland', 'dry farmland', 'irrigated farmland') THEN land_use_norm
+              ELSE NULL
+            END AS land_type,
+            price_per_acre,
+            price_per_sf
+          FROM base
+        )
+    """
+
+    params: Tuple[Any, ...]
+    if dim == "land_type":
+        land_type = str(bucket or "").strip().lower()
+        if land_type not in {"grassland", "dry farmland", "irrigated farmland"}:
+            raise ValueError("bucket must be one of: grassland, dry farmland, irrigated farmland")
+        sql = (
+            base_sql
+            + """
+            SELECT
+              parcel_id,
+              sale_date,
+              sale_year,
+              sale_price,
+              year_built,
+              building_sqft,
+              lot_sqft,
+              land_type,
+              price_per_acre,
+              price_per_sf
+            FROM normalized
+            WHERE land_type = %s
+            ORDER BY sale_date DESC NULLS LAST, parcel_id ASC
+            LIMIT %s;
+            """
+        )
+        params = (land_type, limit)
+    elif dim == "year_built":
+        try:
+            year_built = int(str(bucket).strip())
+        except Exception as e:
+            raise ValueError("bucket must be an integer year for dimension=year_built") from e
+        sql = (
+            base_sql
+            + """
+            SELECT
+              parcel_id,
+              sale_date,
+              sale_year,
+              sale_price,
+              year_built,
+              building_sqft,
+              lot_sqft,
+              land_type,
+              price_per_acre,
+              price_per_sf
+            FROM normalized
+            WHERE year_built = %s
+              AND price_per_sf IS NOT NULL
+            ORDER BY sale_date DESC NULLS LAST, parcel_id ASC
+            LIMIT %s;
+            """
+        )
+        params = (year_built, limit)
+    else:
+        try:
+            sale_year = int(str(bucket).strip())
+        except Exception as e:
+            raise ValueError("bucket must be an integer year for dimension=sale_year") from e
+        sql = (
+            base_sql
+            + """
+            SELECT
+              parcel_id,
+              sale_date,
+              sale_year,
+              sale_price,
+              year_built,
+              building_sqft,
+              lot_sqft,
+              land_type,
+              price_per_acre,
+              price_per_sf
+            FROM normalized
+            WHERE sale_year = %s
+              AND price_per_sf IS NOT NULL
+            ORDER BY sale_date DESC NULLS LAST, parcel_id ASC
+            LIMIT %s;
+            """
+        )
+        params = (sale_year, limit)
+
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
             return [dict(r) for r in cur.fetchall()]
 
 
@@ -397,6 +654,21 @@ def list_dataset_marts(dataset: str) -> List[Dict[str, Any]]:
                 "name": "sales_by_year",
                 "view": "marts_parcels_sales_by_year",
                 "description": "Sales count + price percentiles by year",
+            },
+            {
+                "name": "price_per_acre_by_land_type",
+                "view": "marts_parcels_price_per_acre_by_land_type",
+                "description": "Price-per-acre distribution grouped by land type",
+            },
+            {
+                "name": "price_per_sf_by_year_built",
+                "view": "marts_parcels_price_per_sf_by_year_built",
+                "description": "Price-per-square-foot grouped by year built",
+            },
+            {
+                "name": "price_per_sf_by_sale_year",
+                "view": "marts_parcels_price_per_sf_by_sale_year",
+                "description": "Price-per-square-foot grouped by sale year",
             },
             {
                 "name": "sales_by_month",

@@ -1,8 +1,9 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
+import type { ColumnDef } from '@tanstack/react-table'
 import { Link } from '@tanstack/react-router'
 import { api } from '../api'
-import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Page, Separator } from '../portfolio-ui'
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, DataTable, Page, Separator } from '../portfolio-ui'
 
 function fmtPct(v: number | null | undefined) {
   if (v === null || v === undefined) return '—'
@@ -12,6 +13,81 @@ function fmtPct(v: number | null | undefined) {
 function fmtInt(v: number | null | undefined) {
   if (v === null || v === undefined) return '—'
   return Intl.NumberFormat().format(v)
+}
+
+function fmtUsd(v: number | null | undefined, fractionDigits = 0) {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—'
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: fractionDigits,
+  }).format(v)
+}
+
+function fmtDate(v: string | null | undefined) {
+  if (!v) return '—'
+  try {
+    return new Date(v).toLocaleDateString()
+  } catch {
+    return v
+  }
+}
+
+function isMartMissingError(err: unknown) {
+  const msg = String((err as Error | undefined)?.message ?? '').toLowerCase()
+  return msg.includes('mart view not available yet') || msg.includes('mart not found')
+}
+
+async function fetchParcelsMartRows(mart: string, limit: number) {
+  try {
+    const res = await api.getMart('parcels', mart, limit)
+    return res.rows ?? []
+  } catch (err) {
+    if (isMartMissingError(err)) return []
+    throw err
+  }
+}
+
+function analyticsSalesColumns(metricKey: 'price_per_acre' | 'price_per_sf'): ColumnDef<Record<string, any>>[] {
+  const metricLabel = metricKey === 'price_per_acre' ? '$/acre' : '$/sf'
+  const metricDigits = metricKey === 'price_per_acre' ? 0 : 2
+  return [
+    { header: 'parcel_id', accessorKey: 'parcel_id' },
+    {
+      header: 'sale_date',
+      accessorKey: 'sale_date',
+      cell: (info) => <span className="text-xs">{fmtDate(String(info.getValue() ?? ''))}</span>,
+    },
+    {
+      header: 'sale_price',
+      accessorKey: 'sale_price',
+      cell: (info) => <span className="font-mono text-xs">{fmtUsd(Number(info.getValue() ?? 0), 0)}</span>,
+    },
+    {
+      header: metricLabel,
+      accessorKey: metricKey,
+      cell: (info) => <span className="font-mono text-xs">{fmtUsd(Number(info.getValue() ?? 0), metricDigits)}</span>,
+    },
+    {
+      header: 'year_built',
+      accessorKey: 'year_built',
+      cell: (info) => <span className="text-xs">{String(info.getValue() ?? '—')}</span>,
+    },
+    {
+      header: 'acres',
+      accessorKey: 'lot_sqft',
+      cell: (info) => {
+        const lotSqft = Number(info.getValue() ?? 0)
+        if (!Number.isFinite(lotSqft) || lotSqft <= 0) return <span className="text-xs text-muted-foreground">—</span>
+        return <span className="font-mono text-xs">{(lotSqft / 43560).toFixed(1)}</span>
+      },
+    },
+    {
+      header: 'land_type',
+      accessorKey: 'land_type',
+      cell: (info) => <span className="text-xs">{String(info.getValue() ?? '—')}</span>,
+    },
+  ]
 }
 
 function StatusKpi(props: { label: string; value: string; hint?: string; badge?: React.ReactNode }) {
@@ -69,10 +145,117 @@ function ActivityChart(props: { activity: { hour: string; received: number; proc
   )
 }
 
+function PriceBarList(props: {
+  rows: Record<string, any>[]
+  labelKey: string
+  valueKey: string
+  countKey?: string
+  valueSuffix: string
+  valueFractionDigits?: number
+  maxRows?: number
+  selectedLabel?: string | null
+  onSelect?: (label: string) => void
+}) {
+  const maxRows = props.maxRows ?? 12
+  const valueFractionDigits = props.valueFractionDigits ?? 0
+  const countKey = props.countKey ?? 'sales_count'
+
+  const rows = (props.rows ?? [])
+    .map((r) => {
+      const labelRaw = r?.[props.labelKey]
+      const valueRaw = Number(r?.[props.valueKey])
+      const countRaw = Number(r?.[countKey])
+      return {
+        label: String(labelRaw ?? '—'),
+        value: Number.isFinite(valueRaw) ? valueRaw : null,
+        count: Number.isFinite(countRaw) ? countRaw : null,
+      }
+    })
+    .filter((r) => r.value !== null)
+    .slice(0, maxRows)
+
+  if (!rows.length) {
+    return <div className="text-sm text-muted-foreground">No analytic rows yet. Seed parcels or ingest parcel sales data.</div>
+  }
+
+  const max = Math.max(1, ...rows.map((r) => Number(r.value ?? 0)))
+
+  return (
+    <div className="space-y-2">
+      {rows.map((r) => {
+        const selected = props.selectedLabel === r.label
+        return (
+          <button
+            key={r.label}
+            type="button"
+            onClick={() => props.onSelect?.(r.label)}
+            className={`w-full rounded-md border p-2 text-left transition ${selected ? 'border-blue-500 bg-blue-50/40' : 'border-transparent hover:border-border'}`}
+          >
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-medium">{r.label}</span>
+                <span className="text-muted-foreground">
+                  {fmtUsd(r.value, valueFractionDigits)}
+                  {props.valueSuffix}
+                  {r.count !== null ? ` • ${fmtInt(r.count)} sales` : ''}
+                </span>
+              </div>
+              <div className="h-2 rounded bg-muted/50">
+                <div className="h-2 rounded bg-blue-500/80" style={{ width: `${Math.max(2, Math.round((Number(r.value) / max) * 100))}%` }} />
+              </div>
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export function DashboardPage() {
   const metaQ = useQuery({ queryKey: ['meta'], queryFn: api.meta })
   const statsQ = useQuery({ queryKey: ['stats', 24], queryFn: () => api.stats(24), refetchInterval: 5000 })
   const dsQ = useQuery({ queryKey: ['datasets', 50], queryFn: () => api.listDatasets(50) })
+  const pricePerAcreQ = useQuery({
+    queryKey: ['mart', 'parcels', 'price_per_acre_by_land_type', 20],
+    queryFn: () => fetchParcelsMartRows('price_per_acre_by_land_type', 20),
+    refetchInterval: 30_000,
+    retry: false,
+  })
+  const pricePerSfByYearBuiltQ = useQuery({
+    queryKey: ['mart', 'parcels', 'price_per_sf_by_year_built', 60],
+    queryFn: () => fetchParcelsMartRows('price_per_sf_by_year_built', 60),
+    refetchInterval: 30_000,
+    retry: false,
+  })
+  const pricePerSfBySaleYearQ = useQuery({
+    queryKey: ['mart', 'parcels', 'price_per_sf_by_sale_year', 20],
+    queryFn: () => fetchParcelsMartRows('price_per_sf_by_sale_year', 20),
+    refetchInterval: 30_000,
+    retry: false,
+  })
+
+  const [selectedLandType, setSelectedLandType] = React.useState<string | null>(null)
+  const [selectedYearBuilt, setSelectedYearBuilt] = React.useState<string | null>(null)
+  const [selectedSaleYear, setSelectedSaleYear] = React.useState<string | null>(null)
+
+  const landTypeSalesQ = useQuery({
+    queryKey: ['analytics-sales', 'parcels', 'land_type', selectedLandType, 80],
+    queryFn: () => api.parcelsAnalyticsSales('land_type', selectedLandType ?? '', 80),
+    enabled: Boolean(selectedLandType),
+    retry: false,
+  })
+  const yearBuiltSalesQ = useQuery({
+    queryKey: ['analytics-sales', 'parcels', 'year_built', selectedYearBuilt, 80],
+    queryFn: () => api.parcelsAnalyticsSales('year_built', selectedYearBuilt ?? '', 80),
+    enabled: Boolean(selectedYearBuilt),
+    retry: false,
+  })
+  const saleYearSalesQ = useQuery({
+    queryKey: ['analytics-sales', 'parcels', 'sale_year', selectedSaleYear, 80],
+    queryFn: () => api.parcelsAnalyticsSales('sale_year', selectedSaleYear ?? '', 80),
+    enabled: Boolean(selectedSaleYear),
+    retry: false,
+  })
 
   const [seedLoading, setSeedLoading] = React.useState(false)
   const [seedResult, setSeedResult] = React.useState<string | null>(null)
@@ -93,9 +276,11 @@ export function DashboardPage() {
 
   const totals = statsQ.data?.totals ?? {}
   const activity = statsQ.data?.activity ?? []
-
   const storage = metaQ.data?.runtime?.storage_backend
   const queue = metaQ.data?.runtime?.queue
+
+  const pricePerAcreColumns = React.useMemo(() => analyticsSalesColumns('price_per_acre'), [])
+  const pricePerSfColumns = React.useMemo(() => analyticsSalesColumns('price_per_sf'), [])
 
   return (
     <Page
@@ -198,7 +383,104 @@ export function DashboardPage() {
             )}
           </CardContent>
         </Card>
+      </div>
 
+      <div className="grid gap-4 xl:grid-cols-3 mt-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>$/acre by land type</CardTitle>
+            <CardDescription>Median price-per-acre by land type. Click a bar to see underlying sales.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {pricePerAcreQ.isLoading ? <div className="text-sm text-muted-foreground">Loading analytics…</div> : null}
+            {pricePerAcreQ.isError ? <div className="text-sm text-destructive">Error: {(pricePerAcreQ.error as Error).message}</div> : null}
+            {!pricePerAcreQ.isLoading && !pricePerAcreQ.isError ? (
+              <PriceBarList
+                rows={pricePerAcreQ.data ?? []}
+                labelKey="land_type"
+                valueKey="median_price_per_acre"
+                valueSuffix="/acre"
+                selectedLabel={selectedLandType}
+                onSelect={setSelectedLandType}
+              />
+            ) : null}
+            {selectedLandType ? <div className="text-xs text-muted-foreground">Showing recent sales for: {selectedLandType}</div> : null}
+            {selectedLandType && landTypeSalesQ.isLoading ? <div className="text-sm text-muted-foreground">Loading sales…</div> : null}
+            {selectedLandType && landTypeSalesQ.isError ? <div className="text-sm text-destructive">Failed to load sales.</div> : null}
+            {selectedLandType && !landTypeSalesQ.isLoading && !landTypeSalesQ.isError ? (
+              (landTypeSalesQ.data?.rows?.length ?? 0) > 0 ? (
+                <DataTable data={landTypeSalesQ.data?.rows ?? []} columns={pricePerAcreColumns} height={260} columnMinWidth={140} />
+              ) : (
+                <div className="text-sm text-muted-foreground">No matching sales for this bucket yet.</div>
+              )
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>$/sf by year built</CardTitle>
+            <CardDescription>Median price-per-square-foot by year built. Click a bar to see underlying sales.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {pricePerSfByYearBuiltQ.isLoading ? <div className="text-sm text-muted-foreground">Loading analytics…</div> : null}
+            {pricePerSfByYearBuiltQ.isError ? <div className="text-sm text-destructive">Error: {(pricePerSfByYearBuiltQ.error as Error).message}</div> : null}
+            {!pricePerSfByYearBuiltQ.isLoading && !pricePerSfByYearBuiltQ.isError ? (
+              <PriceBarList
+                rows={pricePerSfByYearBuiltQ.data ?? []}
+                labelKey="year_built"
+                valueKey="median_price_per_sf"
+                valueSuffix="/sf"
+                valueFractionDigits={2}
+                maxRows={14}
+                selectedLabel={selectedYearBuilt}
+                onSelect={setSelectedYearBuilt}
+              />
+            ) : null}
+            {selectedYearBuilt ? <div className="text-xs text-muted-foreground">Showing recent sales for year built: {selectedYearBuilt}</div> : null}
+            {selectedYearBuilt && yearBuiltSalesQ.isLoading ? <div className="text-sm text-muted-foreground">Loading sales…</div> : null}
+            {selectedYearBuilt && yearBuiltSalesQ.isError ? <div className="text-sm text-destructive">Failed to load sales.</div> : null}
+            {selectedYearBuilt && !yearBuiltSalesQ.isLoading && !yearBuiltSalesQ.isError ? (
+              (yearBuiltSalesQ.data?.rows?.length ?? 0) > 0 ? (
+                <DataTable data={yearBuiltSalesQ.data?.rows ?? []} columns={pricePerSfColumns} height={260} columnMinWidth={140} />
+              ) : (
+                <div className="text-sm text-muted-foreground">No matching sales for this bucket yet.</div>
+              )
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>$/sf by sale year</CardTitle>
+            <CardDescription>Median price-per-square-foot by sale year. Click a bar to see underlying sales.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {pricePerSfBySaleYearQ.isLoading ? <div className="text-sm text-muted-foreground">Loading analytics…</div> : null}
+            {pricePerSfBySaleYearQ.isError ? <div className="text-sm text-destructive">Error: {(pricePerSfBySaleYearQ.error as Error).message}</div> : null}
+            {!pricePerSfBySaleYearQ.isLoading && !pricePerSfBySaleYearQ.isError ? (
+              <PriceBarList
+                rows={pricePerSfBySaleYearQ.data ?? []}
+                labelKey="sale_year"
+                valueKey="median_price_per_sf"
+                valueSuffix="/sf"
+                valueFractionDigits={2}
+                selectedLabel={selectedSaleYear}
+                onSelect={setSelectedSaleYear}
+              />
+            ) : null}
+            {selectedSaleYear ? <div className="text-xs text-muted-foreground">Showing recent sales for sale year: {selectedSaleYear}</div> : null}
+            {selectedSaleYear && saleYearSalesQ.isLoading ? <div className="text-sm text-muted-foreground">Loading sales…</div> : null}
+            {selectedSaleYear && saleYearSalesQ.isError ? <div className="text-sm text-destructive">Failed to load sales.</div> : null}
+            {selectedSaleYear && !saleYearSalesQ.isLoading && !saleYearSalesQ.isError ? (
+              (saleYearSalesQ.data?.rows?.length ?? 0) > 0 ? (
+                <DataTable data={saleYearSalesQ.data?.rows ?? []} columns={pricePerSfColumns} height={260} columnMinWidth={140} />
+              ) : (
+                <div className="text-sm text-muted-foreground">No matching sales for this bucket yet.</div>
+              )
+            ) : null}
+          </CardContent>
+        </Card>
       </div>
 
       <div className="mt-6">

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import random
-import uuid
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Tuple
 
 
 @dataclass(frozen=True)
-class RecorderSale:
-    sale_id: str
+class ParcelSale:
     parcel_id: str
+    county: str
     situs_address: str
     city: str
     state: str
@@ -31,6 +30,9 @@ class RecorderSale:
     bathrooms: float
     building_sqft: int
     lot_sqft: int
+    assessed_value: float
+    land_use: str
+    updated_at: str
 
 
 SPRINGFIELD_CO_CENTER: Tuple[float, float] = (37.4083, -102.6146)
@@ -64,6 +66,21 @@ _DEED_TYPES = [
     "Special Warranty Deed",
     "Trustee Deed",
 ]
+
+_LAND_TYPE_CONFIG: Dict[str, Dict[str, float]] = {
+    "grassland": {
+        "weight": 0.30,
+        "target_price_per_acre": 600.0,
+    },
+    "dry farmland": {
+        "weight": 0.35,
+        "target_price_per_acre": 800.0,
+    },
+    "irrigated farmland": {
+        "weight": 0.35,
+        "target_price_per_acre": 1_500.0,
+    },
+}
 
 _LAST_NAMES = [
     "Anderson",
@@ -143,8 +160,10 @@ def generate_recorder_sales(limit: int = 200, seed: int = 81073, parcel_id_prefi
     today = datetime.now(timezone.utc).date()
     start = today - timedelta(days=365 * 12)
 
-    rows: List[RecorderSale] = []
-    ns = uuid.UUID("2b7c65c3-8da4-4b4a-8c9e-4e2ec6688db4")
+    rows: List[ParcelSale] = []
+    land_types = list(_LAND_TYPE_CONFIG.keys())
+    land_weights = [_LAND_TYPE_CONFIG[k]["weight"] for k in land_types]
+
     for i in range(limit):
         lat = rng.uniform(SPRINGFIELD_CO_BBOX["lat_min"], SPRINGFIELD_CO_BBOX["lat_max"])
         lon = rng.uniform(SPRINGFIELD_CO_BBOX["lon_min"], SPRINGFIELD_CO_BBOX["lon_max"])
@@ -156,15 +175,20 @@ def generate_recorder_sales(limit: int = 200, seed: int = 81073, parcel_id_prefi
         sale_dt = start + timedelta(days=rng.randint(0, (today - start).days))
         recording_dt = sale_dt + timedelta(days=rng.randint(0, 14))
 
-        year_built = rng.randint(1950, 2021)
+        land_type = rng.choices(land_types, weights=land_weights, k=1)[0]
+        land_cfg = _LAND_TYPE_CONFIG[land_type]
+        target_price_per_acre = land_cfg["target_price_per_acre"] * rng.uniform(0.88, 1.12)
+
+        year_built = rng.randint(1950, 2024)
         bedrooms = rng.randint(2, 5)
         bathrooms = rng.choice([1.0, 1.5, 2.0, 2.5, 3.0])
-        building_sqft = rng.randint(900, 3200)
-        lot_sqft = rng.randint(3500, 20000)
+        building_sqft = rng.randint(900, 5000)
+        price_per_sf = rng.uniform(25.0, 300.0)
+        price = int(max(60_000, building_sqft * price_per_sf))
+        acres = max(10.0, min(2500.0, price / target_price_per_acre))
+        lot_sqft = max(4_000, int(acres * 43_560.0))
 
-        # Rough, synthetic pricing model (no relationship to any real property).
-        base = 55_000 + building_sqft * rng.randint(95, 155)
-        price = int(max(45_000, base + rng.randint(-25_000, 35_000)))
+        assessed_value = round(price * rng.uniform(0.80, 1.20), 2)
 
         deed_type = rng.choice(_DEED_TYPES)
         book, page = _rand_book_page(rng)
@@ -173,12 +197,15 @@ def generate_recorder_sales(limit: int = 200, seed: int = 81073, parcel_id_prefi
         grantor = _rand_name(rng)
         grantee = _rand_name(rng)
 
-        parcel_id = f"{parcel_id_prefix}-{i + 1:04d}"
+        parcel_id = f"{parcel_id_prefix}-{i + 1:05d}"
+        updated_at = datetime.combine(recording_dt, datetime.min.time(), tzinfo=timezone.utc) + timedelta(
+            hours=rng.randint(1, 72)
+        )
 
         rows.append(
-            RecorderSale(
-                sale_id=str(uuid.uuid5(ns, f"{parcel_id}:{sale_dt.isoformat()}")),
+            ParcelSale(
                 parcel_id=parcel_id,
+                county="Baca",
                 situs_address=situs,
                 city="Springfield",
                 state="CO",
@@ -199,6 +226,9 @@ def generate_recorder_sales(limit: int = 200, seed: int = 81073, parcel_id_prefi
                 bathrooms=bathrooms,
                 building_sqft=building_sqft,
                 lot_sqft=lot_sqft,
+                assessed_value=assessed_value,
+                land_use=land_type,
+                updated_at=_iso_dt(updated_at),
             )
         )
 

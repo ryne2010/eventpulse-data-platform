@@ -11,5 +11,8 @@ def test_parcels_marts_include_expected_views() -> None:
     assert "freshness" in names
     assert "price_stats" in names
     assert "sales_by_year" in names
+    assert "price_per_acre_by_land_type" in names
+    assert "price_per_sf_by_year_built" in names
+    assert "price_per_sf_by_sale_year" in names
     assert "sales_by_month" in names
     assert "geo_points" in names

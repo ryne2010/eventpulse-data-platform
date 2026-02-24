@@ -158,6 +158,15 @@ export type MartDataResponse = {
   limit: number
 }
 
+export type ParcelsAnalyticsSalesResponse = {
+  dataset: string
+  dimension: string
+  bucket: string
+  limit: number
+  table_exists: boolean
+  rows: Record<string, any>[]
+}
+
 export type SeedResponse = {
   ok: boolean
   rows: number
@@ -390,6 +399,14 @@ export const api = {
   listMarts: (dataset: string) => jsonFetch<MartListResponse>(`/api/datasets/${dataset}/marts`),
   getMart: (dataset: string, mart: string, limit = 200) =>
     jsonFetch<MartDataResponse>(`/api/datasets/${dataset}/marts/${mart}?limit=${limit}`),
+  parcelsAnalyticsSales: (dimension: 'land_type' | 'year_built' | 'sale_year', bucket: string | number, limit = 200) => {
+    const params = new URLSearchParams({
+      dimension,
+      bucket: String(bucket),
+      limit: String(limit),
+    })
+    return jsonFetch<ParcelsAnalyticsSalesResponse>(`/api/datasets/parcels/analytics/sales?${params.toString()}`)
+  },
 
   // Ingestions
   listIngestions: (limit = 50, dataset?: string, status?: string) => {

@@ -22,6 +22,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import __version__
 from .config import normalize_ingest_auth_mode, normalize_task_auth_mode, settings
 from .contracts import load_contract_with_meta, parse_contract_yaml
+from .demo.real_estate import generate_recorder_sales
 from .db import (
     db_ping,
     create_replay_ingestion,
@@ -60,6 +61,7 @@ from .loaders.postgres import (
     sample_curated,
     sample_curated_for_ingestion,
     list_dataset_marts,
+    sample_parcels_sales_for_bucket,
     sample_view,
     view_exists,
 )
@@ -1276,6 +1278,7 @@ def api_preview(ingestion_id: str, limit: int = 10) -> Dict[str, Any]:
     if not ing:
         raise HTTPException(status_code=404, detail="not found")
 
+    limit = max(1, min(int(limit), 2000))
     dataset = normalize_dataset_name(str(ing["dataset"]))
     table_exists = curated_table_exists(dataset)
     rows = []
@@ -1534,6 +1537,38 @@ def api_get_mart(dataset: str, mart: str, limit: int = 200) -> Dict[str, Any]:
     return {"dataset": dataset, "mart": mart, "view": view, "rows": rows, "limit": limit}
 
 
+@app.get("/api/datasets/{dataset}/analytics/sales")
+def api_get_sales_analytics_bucket(dataset: str, dimension: str, bucket: str, limit: int = 200) -> Dict[str, Any]:
+    dataset = normalize_dataset_name(dataset)
+    if dataset != "parcels":
+        raise HTTPException(status_code=404, detail="analytics drill-down is currently supported only for parcels")
+
+    limit = max(1, min(int(limit), 2000))
+    if not curated_table_exists(dataset):
+        return {
+            "dataset": dataset,
+            "dimension": dimension,
+            "bucket": bucket,
+            "limit": limit,
+            "table_exists": False,
+            "rows": [],
+        }
+
+    try:
+        rows = sample_parcels_sales_for_bucket(dimension=dimension, bucket=bucket, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return {
+        "dataset": dataset,
+        "dimension": dimension,
+        "bucket": bucket,
+        "limit": limit,
+        "table_exists": True,
+        "rows": rows,
+    }
+
+
 @app.get("/api/datasets/{dataset}/curated/sample")
 def api_curated_sample(dataset: str, limit: int = 20) -> Dict[str, Any]:
     dataset = normalize_dataset_name(dataset)
@@ -1625,30 +1660,24 @@ def api_data_products(limit_datasets: int = 200) -> Dict[str, Any]:
 def seed_parcels(request: Request, limit: int = 50, per_ingestion_max: int = 15) -> Dict[str, Any]:
     """Seed a demo dataset by enqueuing multiple ingestions.
 
-    Uses the packaged sample file in `data/samples/` by default.
+    Uses synthetic Springfield-area parcel sales generated in-process.
     """
 
     if not settings.enable_demo_endpoints:
         raise HTTPException(status_code=404, detail="demo endpoints disabled")
 
-    # Prefer a user-provided file in INCOMING_DIR (handy for quick experimentation).
-    candidates = [
-        Path(settings.incoming_dir) / "parcels_baseline.xlsx",
-        Path(__file__).resolve().parent.parent / "data" / "samples" / "parcels_baseline.xlsx",
-    ]
-
-    src = next((p for p in candidates if p.exists()), None)
-    if not src:
-        raise HTTPException(
-            status_code=404, detail="missing parcels_baseline.xlsx (checked INCOMING_DIR and packaged samples)"
-        )
-
+    limit = max(1, min(int(limit), 2_000))
+    per_ingestion_max = max(1, min(int(per_ingestion_max), 200))
     ingestions = []
     total_rows = 0
 
-    df = pd.read_excel(src)
-    n = min(limit, len(df))
-    df = df.head(n)
+    seed = int(uuid.uuid4().int % 2_147_483_647)
+    generated = generate_recorder_sales(limit=limit, seed=seed)
+    rows = generated.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=500, detail="failed to generate demo parcels rows")
+
+    df = pd.DataFrame(rows)
 
     chunks = [df[i : i + per_ingestion_max] for i in range(0, len(df), per_ingestion_max)]
     seed_id = uuid.uuid4().hex[:8]
@@ -1669,6 +1698,7 @@ def seed_parcels(request: Request, limit: int = 50, per_ingestion_max: int = 15)
             "ok": True,
             "rows": total_rows,
             "seed_id": seed_id,
+            "generator_seed": seed,
             "per_ingestion_max": per_ingestion_max,
             "ingestions": ingestions,
         }

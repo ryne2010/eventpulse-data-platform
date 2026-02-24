@@ -67,10 +67,13 @@ function Section(props: { title: string; description?: string; children: React.R
 
 function QualitySummary(props: { ingestion: Ingestion; report: QualityReport | undefined }) {
   const r = props.report as any
-  const ok = Boolean(r?.ok)
-  const errors: string[] = r?.errors ?? []
-  const warnings: string[] = r?.warnings ?? []
-  const metrics = r?.metrics ?? {}
+  // Current API shape nests validation under `quality`; keep a flat fallback
+  // so older persisted report formats still render correctly.
+  const q = r?.quality ?? r
+  const ok = Boolean(q?.passed ?? q?.ok)
+  const errors: string[] = q?.errors ?? []
+  const warnings: string[] = q?.warnings ?? []
+  const metrics = q?.metrics ?? {}
   const nullFractions: Record<string, number> = metrics?.null_fractions ?? {}
 
   const worstNulls = Object.entries(nullFractions)

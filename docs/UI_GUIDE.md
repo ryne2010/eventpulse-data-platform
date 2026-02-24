@@ -8,6 +8,11 @@ This UI is intentionally small (React + Vite + TanStack Router/Query) but it aim
 
 - Platform KPIs (totals, backlog, success rate, stuck processing)
 - Activity chart (recent ingestions)
+- Real-estate analytics for parcels:
+  - median `$ / acre` by land type
+  - median `$ / sf` by year built
+  - median `$ / sf` by sale year
+  - click any analytics bar to drill into matching sale rows
 - Dataset shortlist (with curated/contract badges)
 - Quick actions (Upload, open parcels, seed demo data)
 
@@ -48,7 +53,7 @@ Tabs:
 - **Schema history** - inferred schemas over time (for drift detection)
 - **Curated sample** - sample rows from `curated_<dataset>`
 - **Marts** - read-optimized Postgres views (warehouse-style aggregates)
-- **Map** - lightweight geo scatter powered by the `geo_points` mart (when available)
+- **Map** - interactive pan/zoom map powered by the `geo_points` mart (when available)
 
 > Marts are created automatically (best-effort) after the first successful ingestion for a dataset.
 

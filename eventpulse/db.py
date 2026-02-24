@@ -213,6 +213,55 @@ def _migrations() -> List[Tuple[int, str, str]]:
             END $$;
             """,
         ),
+        (
+            10,
+            "remove_legacy_edge_artifacts",
+            """
+            -- Remove legacy edge telemetry dataset artifacts from historical installs.
+            -- This keeps dataset lists/UI clean after edge features were removed.
+
+            -- Null out audit FK references first (defensive; FK is ON DELETE SET NULL).
+            UPDATE audit_events
+            SET ingestion_id = NULL
+            WHERE ingestion_id IN (
+              SELECT id FROM ingestions WHERE dataset = 'edge_telemetry'
+            );
+
+            -- Delete ingestion-derived metadata for the removed dataset.
+            DELETE FROM quality_reports
+            WHERE ingestion_id IN (
+              SELECT id FROM ingestions WHERE dataset = 'edge_telemetry'
+            );
+
+            DELETE FROM lineage_artifacts
+            WHERE ingestion_id IN (
+              SELECT id FROM ingestions WHERE dataset = 'edge_telemetry'
+            );
+
+            DELETE FROM ingestions
+            WHERE dataset = 'edge_telemetry';
+
+            DELETE FROM dataset_schemas
+            WHERE dataset = 'edge_telemetry';
+
+            DELETE FROM audit_events
+            WHERE dataset = 'edge_telemetry';
+
+            -- Drop legacy marts/tables if they still exist in local/dev databases.
+            DROP VIEW IF EXISTS marts_edge_telemetry_freshness CASCADE;
+            DROP VIEW IF EXISTS marts_edge_telemetry_latest_by_device CASCADE;
+            DROP VIEW IF EXISTS marts_edge_telemetry_latest_readings CASCADE;
+            DROP VIEW IF EXISTS marts_edge_telemetry_device_status CASCADE;
+            DROP VIEW IF EXISTS marts_edge_telemetry_device_geo CASCADE;
+            DROP VIEW IF EXISTS marts_edge_telemetry_device_geo_status CASCADE;
+            DROP VIEW IF EXISTS marts_edge_telemetry_device_alerts CASCADE;
+            DROP VIEW IF EXISTS marts_edge_telemetry_geo_points CASCADE;
+
+            DROP TABLE IF EXISTS curated_edge_telemetry CASCADE;
+            DROP TABLE IF EXISTS device_media CASCADE;
+            DROP TABLE IF EXISTS devices CASCADE;
+            """,
+        ),
     ]
 
 
