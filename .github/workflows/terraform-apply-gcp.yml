@@ -1,0 +1,203 @@
+name: Terraform apply (GCP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Environment name (dev/stage/prod)."
+        required: true
+        default: "dev"
+      image_tag:
+        description: "Artifact Registry image tag to pin for terraform apply."
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: gcp-infra-${{ github.event.inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.env }}
+
+    env:
+      PROJECT_ID: ${{ vars.PROJECT_ID }}
+      REGION: ${{ vars.REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_PREFIX: ${{ vars.TF_STATE_PREFIX }}
+      AR_REPO: ${{ vars.AR_REPO }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_WIF_SERVICE_ACCOUNT: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
+      GCP_TF_CONFIG_GCS_PATH: ${{ vars.GCP_TF_CONFIG_GCS_PATH }}
+      TF_DIR: infra/gcp/cloud_run_api_demo
+      IMAGE_NAME: eventpulse-api
+
+    steps:
+      - name: Assert required GitHub variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GCP_WIF_PROVIDER}" || { echo "::error::Missing variable: GCP_WIF_PROVIDER"; exit 1; }
+          test -n "${GCP_WIF_SERVICE_ACCOUNT}" || { echo "::error::Missing variable: GCP_WIF_SERVICE_ACCOUNT"; exit 1; }
+          test -n "${GCP_TF_CONFIG_GCS_PATH}" || { echo "::error::Missing variable: GCP_TF_CONFIG_GCS_PATH"; exit 1; }
+          test -n "${PROJECT_ID}" || { echo "::error::Missing variable: PROJECT_ID"; exit 1; }
+          test -n "${REGION}" || { echo "::error::Missing variable: REGION"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.5"
+
+      - name: Fetch Terraform config bundle from GCS
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fetching Terraform config from: ${GCP_TF_CONFIG_GCS_PATH}"
+          gcloud storage cp "${GCP_TF_CONFIG_GCS_PATH}/backend.hcl" "${TF_DIR}/backend.hcl"
+          gcloud storage cp "${GCP_TF_CONFIG_GCS_PATH}/terraform.tfvars" "${TF_DIR}/terraform.tfvars"
+
+      - name: Parse Terraform config bundle
+        id: cfg
+        env:
+          WORKFLOW_ENV: ${{ github.event.inputs.env }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          tfvars_path = pathlib.Path(os.environ["TF_DIR"]) / "terraform.tfvars"
+          text = tfvars_path.read_text(encoding="utf-8")
+
+          def get_str(key: str, default: str = "") -> str:
+              quoted = re.search(rf'^\s*{re.escape(key)}\s*=\s*"([^"]*)"\s*(?:#.*)?$', text, re.M)
+              if quoted:
+                  return quoted.group(1)
+              bare = re.search(rf'^\s*{re.escape(key)}\s*=\s*([^\s#]+)\s*(?:#.*)?$', text, re.M)
+              if bare:
+                  return bare.group(1)
+              return default
+
+          def get_bool(key: str, default: bool) -> bool:
+              value = get_str(key, "")
+              if not value:
+                  return default
+              return value.lower() == "true"
+
+          env_name = get_str("env", os.environ["WORKFLOW_ENV"])
+          service_name = get_str("service_name", f"eventpulse-{env_name}")
+          artifact_repo_name = get_str("artifact_repo_name", os.environ.get("AR_REPO") or "eventpulse")
+          image_name = get_str("image_name", os.environ.get("IMAGE_NAME") or "eventpulse-api")
+          workspace_domain = get_str("workspace_domain", "")
+          group_prefix = get_str("group_prefix", "eventpulse")
+          enable_observability = "true" if get_bool("enable_observability", True) else "false"
+
+          outputs = {
+              "env_name": env_name,
+              "service_name": service_name,
+              "artifact_repo_name": artifact_repo_name,
+              "image_name": image_name,
+              "workspace_domain": workspace_domain,
+              "group_prefix": group_prefix,
+              "enable_observability": enable_observability,
+          }
+          out_path = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+          with out_path.open("a", encoding="utf-8") as handle:
+              for key, value in outputs.items():
+                  handle.write(f"{key}={value}\n")
+          PY
+
+      - name: Configure gcloud defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          gcloud config set run/region "${REGION}"
+
+      - name: Terraform apply
+        env:
+          IMAGE_TAG_INPUT: ${{ github.event.inputs.image_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TF_STATE_BUCKET_EFFECTIVE="${TF_STATE_BUCKET:-${PROJECT_ID}-tfstate}"
+          TF_STATE_PREFIX_EFFECTIVE="${TF_STATE_PREFIX:-eventpulse/${{ steps.cfg.outputs.env_name }}}"
+          AR_REPO_EFFECTIVE="${{ steps.cfg.outputs.artifact_repo_name }}"
+          IMAGE_NAME_EFFECTIVE="${{ steps.cfg.outputs.image_name }}"
+          IMAGE_BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO_EFFECTIVE}/${IMAGE_NAME_EFFECTIVE}"
+          TAG_EFFECTIVE="${IMAGE_TAG_INPUT}"
+
+          if [ -z "${TAG_EFFECTIVE}" ]; then
+            echo "::error::image_tag is required."
+            exit 1
+          fi
+
+          if ! gcloud artifacts docker images describe "${IMAGE_BASE}:${TAG_EFFECTIVE}" >/dev/null 2>&1; then
+            echo "::error::Resolved image not found: ${IMAGE_BASE}:${TAG_EFFECTIVE}"
+            exit 1
+          fi
+
+          export IMAGE_NAME_EFFECTIVE TAG_EFFECTIVE
+
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          tfvars_path = pathlib.Path(os.environ["TF_DIR"]) / "terraform.tfvars"
+          text = tfvars_path.read_text(encoding="utf-8")
+
+          updates = {
+              "image": "",
+              "image_name": os.environ["IMAGE_NAME_EFFECTIVE"],
+              "image_tag": os.environ["TAG_EFFECTIVE"],
+          }
+
+          for key, value in updates.items():
+              pattern = re.compile(rf'^\s*{re.escape(key)}\s*=.*$', re.M)
+              replacement = f'{key} = "{value}"'
+              if pattern.search(text):
+                  text = pattern.sub(replacement, text, count=1)
+              else:
+                  if text and not text.endswith("\n"):
+                      text += "\n"
+                  text += replacement + "\n"
+
+          tfvars_path.write_text(text, encoding="utf-8")
+          PY
+
+          gcloud storage cp "${TF_DIR}/terraform.tfvars" "${GCP_TF_CONFIG_GCS_PATH}/terraform.tfvars"
+
+          make apply-gcp \
+            PROJECT_ID="${PROJECT_ID}" \
+            REGION="${REGION}" \
+            ENV="${{ steps.cfg.outputs.env_name }}" \
+            SERVICE_NAME="${{ steps.cfg.outputs.service_name }}" \
+            AR_REPO="${AR_REPO_EFFECTIVE}" \
+            WORKSPACE_DOMAIN="${{ steps.cfg.outputs.workspace_domain }}" \
+            GROUP_PREFIX="${{ steps.cfg.outputs.group_prefix }}" \
+            ENABLE_OBSERVABILITY="${{ steps.cfg.outputs.enable_observability }}" \
+            TF_STATE_BUCKET="${TF_STATE_BUCKET_EFFECTIVE}" \
+            TF_STATE_PREFIX="${TF_STATE_PREFIX_EFFECTIVE}" \
+            TF_BACKEND_HCL="backend.hcl" \
+            IMAGE_NAME="${IMAGE_NAME_EFFECTIVE}" \
+            TAG="${TAG_EFFECTIVE}"

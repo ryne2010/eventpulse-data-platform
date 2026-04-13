@@ -53,6 +53,10 @@ TF_DIR ?= infra/gcp/cloud_run_api_demo
 
 TF_STATE_BUCKET ?= $(PROJECT_ID)-tfstate
 TF_STATE_PREFIX ?= eventpulse/$(ENV)
+TF_CONFIG_BUCKET ?= $(PROJECT_ID)-config
+TF_CONFIG_PREFIX ?= eventpulse/$(ENV)
+TF_CONFIG_GCS_PATH ?= gs://$(TF_CONFIG_BUCKET)/$(TF_CONFIG_PREFIX)
+TF_BACKEND_HCL ?=
 
 # Workspace IAM starter pack (optional; Google Groups)
 WORKSPACE_DOMAIN ?=
@@ -76,6 +80,7 @@ endef
 	up dev smoke down reset clean clean-py clean-web clean-terraform logs watch \
 	gen ingest list sample \
 	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp build-gcp deploy-gcp url-gcp verify-gcp logs-gcp destroy-gcp \
+	tf-config-bucket-gcp tf-config-print-gcp tf-config-pull-gcp tf-config-push-gcp deploy-gcp-safe \
 	db-secret lock web-check
 
 help:
@@ -97,8 +102,12 @@ help:
 	@echo ""
 	@echo "GCP targets (optional):"
 	@echo "  bootstrap-state-gcp  Create/verify Terraform state bucket"
+	@echo "  tf-config-print-gcp  Print the GCS path used for backend.hcl + terraform.tfvars"
+	@echo "  tf-config-pull-gcp   Download backend.hcl + terraform.tfvars from GCS"
+	@echo "  tf-config-push-gcp   Upload local backend.hcl + terraform.tfvars back to GCS"
 	@echo "  infra-gcp            End-to-end infra (plan+apply+postchecks)"
 	@echo "  deploy-gcp       Team-ready deploy to Cloud Run (remote state + Cloud Build)"
+	@echo "  deploy-gcp-safe  Build + apply + verify"
 	@echo "  plan-gcp         Terraform plan"
 	@echo "  apply-gcp        Terraform apply"
 	@echo "  url-gcp          Print service URL"
@@ -259,12 +268,14 @@ doctor-gcp:
 	echo "  REGION=$(REGION)"; \
 	echo "  ENV=$(ENV)"; \
 	echo "  SERVICE_NAME=$(SERVICE_NAME)"; \
-	echo "  IMAGE=$(IMAGE)"; \
-	echo "  TF_STATE_BUCKET=$(TF_STATE_BUCKET)"; \
-	echo "  TF_STATE_PREFIX=$(TF_STATE_PREFIX)"; \
-		echo "  WORKSPACE_DOMAIN=$(WORKSPACE_DOMAIN)"; \
-		echo "  GROUP_PREFIX=$(GROUP_PREFIX)"; \
-		echo "  ENABLE_OBSERVABILITY=$(ENABLE_OBSERVABILITY)"; \
+		echo "  IMAGE=$(IMAGE)"; \
+		echo "  TF_STATE_BUCKET=$(TF_STATE_BUCKET)"; \
+		echo "  TF_STATE_PREFIX=$(TF_STATE_PREFIX)"; \
+		echo "  TF_CONFIG_GCS_PATH=$(TF_CONFIG_GCS_PATH)"; \
+		echo "  TF_BACKEND_HCL=$(TF_BACKEND_HCL)"; \
+			echo "  WORKSPACE_DOMAIN=$(WORKSPACE_DOMAIN)"; \
+			echo "  GROUP_PREFIX=$(GROUP_PREFIX)"; \
+			echo "  ENABLE_OBSERVABILITY=$(ENABLE_OBSERVABILITY)"; \
 	echo ""; \
 	echo "Required for Cloud deploy:"; \
 	if command -v gcloud >/dev/null 2>&1; then \
@@ -413,14 +424,48 @@ bootstrap-state-gcp: doctor-gcp
 		echo "Creating bucket..."; \
 		gcloud storage buckets create "gs://$(TF_STATE_BUCKET)" --location="$(REGION)" --uniform-bucket-level-access --public-access-prevention=enforced; \
 		echo "Enabling versioning..."; \
-		gcloud storage buckets update "gs://$(TF_STATE_BUCKET)" --versioning; \
+			gcloud storage buckets update "gs://$(TF_STATE_BUCKET)" --versioning; \
+		fi
+
+tf-config-bucket-gcp: doctor-gcp
+	@echo "Ensuring Terraform config bucket exists: gs://$(TF_CONFIG_BUCKET)"
+	@if gcloud storage buckets describe "gs://$(TF_CONFIG_BUCKET)" >/dev/null 2>&1; then \
+		echo "Bucket already exists."; \
+	else \
+		echo "Creating bucket..."; \
+		gcloud storage buckets create "gs://$(TF_CONFIG_BUCKET)" --location="$(REGION)" --uniform-bucket-level-access --public-access-prevention=enforced; \
 	fi
 
-tf-init-gcp: bootstrap-state-gcp
-	@echo "Terraform init (remote state)"
-	terraform -chdir=$(TF_DIR) init -reconfigure \
-		-backend-config="bucket=$(TF_STATE_BUCKET)" \
-		-backend-config="prefix=$(TF_STATE_PREFIX)"
+tf-config-print-gcp:
+	@echo "$(TF_CONFIG_GCS_PATH)"
+
+tf-config-pull-gcp: doctor-gcp
+	@set -euo pipefail; \
+	echo "Fetching Terraform config from: $(TF_CONFIG_GCS_PATH)"; \
+	gcloud storage cp "$(TF_CONFIG_GCS_PATH)/backend.hcl" "$(TF_DIR)/backend.hcl"; \
+	gcloud storage cp "$(TF_CONFIG_GCS_PATH)/terraform.tfvars" "$(TF_DIR)/terraform.tfvars"; \
+	echo "Downloaded $(TF_DIR)/backend.hcl and $(TF_DIR)/terraform.tfvars"
+
+tf-config-push-gcp: doctor-gcp tf-config-bucket-gcp
+	@set -euo pipefail; \
+	test -f "$(TF_DIR)/backend.hcl" || (echo "Missing $(TF_DIR)/backend.hcl"; exit 1); \
+	test -f "$(TF_DIR)/terraform.tfvars" || (echo "Missing $(TF_DIR)/terraform.tfvars"; exit 1); \
+	echo "Uploading Terraform config to: $(TF_CONFIG_GCS_PATH)"; \
+	gcloud storage cp "$(TF_DIR)/backend.hcl" "$(TF_CONFIG_GCS_PATH)/backend.hcl"; \
+	gcloud storage cp "$(TF_DIR)/terraform.tfvars" "$(TF_CONFIG_GCS_PATH)/terraform.tfvars"
+
+tf-init-gcp: doctor-gcp
+	@set -euo pipefail; \
+	if [ -n "$(TF_BACKEND_HCL)" ]; then \
+		echo "Terraform init (backend-config file): $(TF_BACKEND_HCL)"; \
+		terraform -chdir=$(TF_DIR) init -reconfigure -backend-config="$(TF_BACKEND_HCL)"; \
+	else \
+		$(MAKE) bootstrap-state-gcp; \
+		echo "Terraform init (remote state)"; \
+		terraform -chdir=$(TF_DIR) init -reconfigure \
+			-backend-config="bucket=$(TF_STATE_BUCKET)" \
+			-backend-config="prefix=$(TF_STATE_PREFIX)"; \
+	fi
 
 # Apply prerequisite infra before building/pushing images.
 infra-gcp: tf-init-gcp
@@ -433,7 +478,8 @@ infra-gcp: tf-init-gcp
 		-var "enable_observability=$(ENABLE_OBSERVABILITY)" \
 		-var "service_name=$(SERVICE_NAME)" \
 		-var "artifact_repo_name=$(AR_REPO)" \
-		-var "image=$(IMAGE)" \
+		-var "image_name=$(IMAGE_NAME)" \
+		-var "image_tag=$(TAG)" \
 		-target=module.core_services \
 		-target=module.artifact_registry \
 		-target=module.service_accounts \
@@ -489,7 +535,8 @@ plan-gcp: tf-init-gcp
 		-var "enable_observability=$(ENABLE_OBSERVABILITY)" \
 		-var "service_name=$(SERVICE_NAME)" \
 		-var "artifact_repo_name=$(AR_REPO)" \
-		-var "image=$(IMAGE)"
+		-var "image_name=$(IMAGE_NAME)" \
+		-var "image_tag=$(TAG)"
 
 apply-gcp: tf-init-gcp
 	terraform -chdir=$(TF_DIR) apply -auto-approve \
@@ -501,7 +548,8 @@ apply-gcp: tf-init-gcp
 		-var "enable_observability=$(ENABLE_OBSERVABILITY)" \
 		-var "service_name=$(SERVICE_NAME)" \
 		-var "artifact_repo_name=$(AR_REPO)" \
-		-var "image=$(IMAGE)"
+		-var "image_name=$(IMAGE_NAME)" \
+		-var "image_tag=$(TAG)"
 
 # Ensure Cloud Build can push to Artifact Registry.
 grant-cloudbuild-gcp: doctor-gcp
@@ -522,6 +570,8 @@ build-gcp: doctor-gcp check-secrets-gcp grant-cloudbuild-gcp
 	gcloud builds submit --tag "$(IMAGE)" .
 
 deploy-gcp: build-gcp apply-gcp verify-gcp
+
+deploy-gcp-safe: build-gcp apply-gcp verify-gcp
 
 # Production-ish posture: private Cloud Run + IAM, direct-to-GCS signed URLs, and event-driven ingestion.
 deploy-gcp-private:
@@ -553,7 +603,8 @@ destroy-gcp: tf-init-gcp
 		-var "enable_observability=$(ENABLE_OBSERVABILITY)" \
 		-var "service_name=$(SERVICE_NAME)" \
 		-var "artifact_repo_name=$(AR_REPO)" \
-		-var "image=$(IMAGE)"
+		-var "image_name=$(IMAGE_NAME)" \
+		-var "image_tag=$(TAG)"
 
 # Add a DATABASE_URL secret version (reads from stdin so you don't put secrets in shell history).
 # Usage:
@@ -618,7 +669,7 @@ tf-fmt: ## Terraform fmt check (no changes)
 		terraform -chdir=$(TF_DIR) fmt -check -recursive; \
 		elif command -v docker >/dev/null 2>&1; then \
 		  echo "terraform not found; running terraform fmt check via Docker"; \
-		  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) hashicorp/terraform:1.9.8 fmt -check -recursive; \
+			  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) hashicorp/terraform:1.14.5 fmt -check -recursive; \
 		else \
 		  echo "terraform not found and docker not available; skipping tf-fmt" >&2; \
 		fi
@@ -629,8 +680,8 @@ tf-validate: ## Terraform validate (no remote backend required)
 		terraform -chdir=$(TF_DIR) validate; \
 		elif command -v docker >/dev/null 2>&1; then \
 		  echo "terraform not found; running terraform validate via Docker"; \
-		  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) hashicorp/terraform:1.9.8 init -backend=false -upgrade >/dev/null; \
-		  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) hashicorp/terraform:1.9.8 validate; \
+			  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) hashicorp/terraform:1.14.5 init -backend=false -upgrade >/dev/null; \
+			  docker run --rm -v "$$(pwd):/workspace" -w /workspace/$(TF_DIR) hashicorp/terraform:1.14.5 validate; \
 		else \
 		  echo "terraform not found and docker not available; skipping tf-validate" >&2; \
 		fi

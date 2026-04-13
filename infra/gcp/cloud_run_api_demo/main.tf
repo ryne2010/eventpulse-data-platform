@@ -4,6 +4,10 @@ locals {
     env = var.env
   }
 
+  # Prefer persisting image_tag in the shared config bundle and derive the URI.
+  # A full image URI remains available as an escape hatch for digest pinning.
+  image = length(trimspace(var.image)) > 0 ? trimspace(var.image) : "${var.region}-docker.pkg.dev/${var.project_id}/${var.artifact_repo_name}/${var.image_name}:${var.image_tag}"
+
   # Names kept deterministic (good for demo / teardown).
   raw_bucket_name   = "${var.project_id}-eventpulse-raw-${var.env}"
   tasks_queue_name  = "eventpulse-${var.env}"
@@ -215,7 +219,7 @@ module "cloud_run" {
   project_id            = var.project_id
   region                = var.region
   service_name          = var.service_name
-  image                 = var.image
+  image                 = local.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
   cpu           = "1"

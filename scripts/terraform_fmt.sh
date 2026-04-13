@@ -13,7 +13,7 @@ fi
 
 if command -v docker >/dev/null 2>&1; then
   echo "terraform not found; running terraform fmt via Docker" >&2
-  docker run --rm -v "$(pwd):/workspace" -w /workspace hashicorp/terraform:1.9.8 fmt -recursive
+  docker run --rm -v "$(pwd):/workspace" -w /workspace hashicorp/terraform:1.14.5 fmt -recursive
   exit 0
 fi
 

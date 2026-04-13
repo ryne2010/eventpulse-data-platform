@@ -36,6 +36,17 @@ The Cloud Run demo uses a GCS backend. The Makefile creates the bucket automatic
 make bootstrap-state-gcp
 ```
 
+For shared environments, keep `backend.hcl` and `terraform.tfvars` in the config bucket and use:
+
+```bash
+make tf-config-print-gcp ENV=dev
+make tf-config-pull-gcp ENV=dev
+make tf-config-push-gcp ENV=dev
+```
+
+CI apply/deploy also updates the shared `terraform.tfvars` image pin (`image_name` + `image_tag`) so
+plan/drift use the same promoted image.
+
 ## Team IAM (Google Groups)
 
 This repo can optionally manage access bindings for common roles (clients/observers, engineers-min, engineers, auditors, platform-admins) using Google Groups.
@@ -55,7 +66,12 @@ For automated deploys:
 - require plan output review for IaC changes
 
 See:
-- `.github/workflows/ci.yml` (lint/typecheck/test + Terraform hygiene)
+- `.github/workflows/ci.yml` (lint/typecheck/test)
+- `.github/workflows/terraform-hygiene.yml`
+- `.github/workflows/gcp-terraform-plan.yml`
+- `.github/workflows/terraform-apply-gcp.yml`
+- `.github/workflows/deploy-gcp.yml`
+- `.github/workflows/terraform-drift.yml`
 - `docs/WIF_GITHUB_ACTIONS.md` (keyless GCP auth for deploy workflows)
 
 

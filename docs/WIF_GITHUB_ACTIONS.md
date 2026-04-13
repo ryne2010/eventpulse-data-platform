@@ -14,7 +14,7 @@ Goals:
 - `infra/gcp/wif_bootstrap/` creates:
   - a CI service account
   - a Workload Identity Pool + Provider scoped to your `OWNER/REPO`
-  - bucket IAM so CI can read config + read/write Terraform state
+  - bucket IAM so CI can read/write config + read/write Terraform state
 
 ### In GCS (single source of truth)
 Store two files per environment:
@@ -23,6 +23,8 @@ Store two files per environment:
 
 ### In GitHub (per environment)
 Repo → Settings → Environments → `<env>` → Variables:
+- `PROJECT_ID`
+- `REGION`
 - `GCP_WIF_PROVIDER`
 - `GCP_WIF_SERVICE_ACCOUNT`
 - `GCP_TF_CONFIG_GCS_PATH` (example: `gs://MY_PROJECT-config/eventpulse/dev`)
@@ -94,11 +96,11 @@ env                = "dev"
 service_name       = "eventpulse-dev"
 artifact_repo_name = "eventpulse"
 
-# Used by CI to compute the full image URI (optional).
+# Used by CI to compute the full image URI.
 image_name = "eventpulse-api"
 
-# CI will update this on each deploy.
-image = "${REGION}-docker.pkg.dev/${PROJECT_ID}/eventpulse/eventpulse-api:latest"
+# Keep this in the config bundle so plan/drift know the expected image reference.
+image_tag = "latest"
 ```
 
 Upload:
@@ -119,9 +121,9 @@ Now set GitHub Environment variable:
   - `.github/workflows/terraform-drift.yml`
 
 - Push-to-main build+deploy (dev):
-  - `.github/workflows/gcp-build-and-deploy.yml`
+  - `.github/workflows/deploy-gcp.yml`
 
-Gotcha:
-- `gcp-build-and-deploy.yml` updates `terraform.tfvars` in GCS to pin the image tag.
-  - This requires the CI service account to have `roles/storage.objectAdmin` on the config bucket.
-  - If you don’t want CI writing config, set `enable_config_bucket_write=false` in `wif_bootstrap` and update config manually.
+Notes:
+- `deploy-gcp.yml` is path-filtered on `main` pushes and can also be run manually.
+- `terraform-apply-gcp.yml` requires an explicit `image_tag`.
+- Apply/deploy rewrite only the image pin in `terraform.tfvars` so later plan/drift runs use the same promoted image.

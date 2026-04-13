@@ -34,7 +34,34 @@ variable "artifact_repo_name" {
 
 variable "image" {
   type        = string
-  description = "Container image URI (Artifact Registry recommended)."
+  description = <<EOT
+Optional full container image URI.
+
+If empty, the image URI is derived from:
+- region
+- project_id
+- artifact_repo_name
+- image_name
+- image_tag
+EOT
+  default     = ""
+}
+
+variable "image_name" {
+  type        = string
+  description = "Artifact Registry image name (the part after the repo)."
+  default     = "eventpulse-api"
+}
+
+variable "image_tag" {
+  type        = string
+  description = "Artifact Registry image tag used when deriving the image URI."
+  default     = "latest"
+
+  validation {
+    condition     = length(var.image) > 0 || length(trimspace(var.image_tag)) > 0
+    error_message = "Set either image (full URI) or image_tag (when using the derived image URI)."
+  }
 }
 
 variable "allow_unauthenticated" {

@@ -44,16 +44,3 @@ jobs:
           make lint
           make typecheck
           make test
-
-  terraform-hygiene:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.9.8"
-
-      - name: Terraform hygiene
-        run: make tf-check
