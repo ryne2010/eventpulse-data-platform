@@ -1,209 +1,87 @@
-# EventPulse Data Platform (Local-first → Cloud Run)
+# EventPulse Data Platform
 
-EventPulse is a small, production-minded reference implementation of an event-driven data platform:
+**Turn recurring files into data products you can trace.**
 
-- **Immutable raw landing zone** (filesystem or GCS)
-- **Schema drift detection** + configurable drift policies
-- **Contract-driven quality gates**
-- **Audit log + quality trends** (observability/governance)
-- **Curated outputs** (Postgres tables) with **lineage metadata columns**
-- **Per-ingestion lineage artifact** persisted to Postgres
-- **Async processing**
-  - Local dev: Redis/RQ (or inline)
-  - Cloud Run: Cloud Tasks → internal processing endpoint
+[![CI](https://github.com/ryne2010/eventpulse-data-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/ryne2010/eventpulse-data-platform/actions/workflows/ci.yml)
 
-It’s designed to be easy to understand, easy to run locally on an **M2 Max MacBook Pro**, and easy to deploy to **Cloud Run**.
+EventPulse is a local-first ingestion platform for data and platform engineers. It accepts CSV and XLSX deliveries, preserves a content-addressed raw copy, evaluates each file against a versioned YAML contract, and publishes curated Postgres tables with quality, drift, and lineage records attached.
 
----
+The repository is deliberately narrow: it shows the controls around a trustworthy ingestion path, not a catalog of connectors or a finished multi-tenant product.
 
-## Quickstart (local)
+## Why it exists
 
-### Prereqs
+Recurring files look simple until a producer renames a column, resends yesterday's extract, or a worker dies halfway through a load. EventPulse makes those cases explicit.
 
-- Docker Desktop
-- `make`
+| Failure mode | Control |
+| --- | --- |
+| A file is delivered twice | Content-addressed raw storage plus primary-key upserts keep curated facts idempotent |
+| Data arrives malformed or changed | YAML contracts, quality rules, stable schema hashes, and `warn` / `fail` / `allow` drift policies |
+| A worker is interrupted | Atomic job claims, bounded attempts, heartbeats, and stale-job reclamation |
+| An operator cannot explain a row | Raw, contract, and schema hashes plus ingestion, audit, and lineage records |
 
-Optional (for running tooling outside Docker): `uv`, `node`, `pnpm`.
+## How it works
 
-### Run
-
-```bash
-make dev
+```mermaid
+flowchart LR
+    A[CSV / XLSX] --> B[Immutable raw copy]
+    B --> C[Queued ingestion]
+    D[YAML contract] --> C
+    C --> E[Quality + drift checks]
+    E --> F[Curated Postgres tables]
+    E --> G[Audit + lineage records]
+    F --> H[React operations UI]
+    G --> H
 ```
 
-`make dev` is the hot-reload loop:
+The local runtime uses FastAPI, Postgres, Redis, and RQ. The React UI exposes ingestion status, contract results, schema history, curated samples, data products, trends, and audit events. Replays create a new ingestion record for the audit trail; contract primary keys prevent duplicate curated rows.
 
-- runs a local `reset` first (cleans local volumes/data)
-- starts Postgres + Redis in Docker
-- runs API (`uvicorn --reload`), worker (`rq.SimpleWorker`), and Vite (`pnpm -C web dev`) on your host
-- seeds parcels demo data and waits for marts
-- keeps running until you press `Ctrl-C`
+## Run it locally
 
-It loads host env vars from `.env.host` (creates from `.env.host.example` if missing).
-
-If you only want to start services (without seeding/checks), use:
+You need Docker with Compose and `make`.
 
 ```bash
-make up
+make smoke
 ```
 
-See `docs/LOCAL_DEV.md` for both workflows.
-
-Optional: set `TASK_TOKEN` in `.env.host` to enable internal endpoints (signed uploads, from_gcs backfills, incoming listing, and contract editing).
-
-Open:
-
-- UI (Vite): `http://localhost:5174`
-- API: `http://localhost:8081`
-- API health: `http://localhost:8081/health` (alias: `/api/healthz`)
-- API runtime meta: `http://localhost:8081/api/meta`
-
-In the UI, use the top nav:
-
-- **Dashboard** — status totals, backlog, and quick actions
-  - plus real-estate analytics for parcels (`$/acre by land type`, `$/sf by year built`, `$/sf by sale year`) with click-to-drill sales rows
-- **Ingestions** — browse events; click through to quality/drift/lineage/audit
-- **Datasets** — contract explorer/editor, schema history, curated sample, and marts
-- **Products** — catalog of published marts (consumption layer)
-- **Trends** — quality pass/fail trends across recent ingestions
-- **Audit** — operational audit log
-- **Ingest** — direct upload (dev), signed URL upload (prod), and backfills
-- **Ops** — runtime config + API docs link
-
-### Seed a demo dataset
+The smoke path builds and starts the API, worker, Postgres, and Redis; seeds synthetic parcel data; verifies API and SPA routes; and waits for the curated marts. Open [http://localhost:8081](http://localhost:8081) to inspect the result.
 
 ```bash
-curl -X POST 'http://localhost:8081/api/demo/seed/parcels?limit=50&per_ingestion_max=10'
+make down
 ```
 
-Then visit the UI and watch ingestions progress (or use **Dashboard → Seed demo data**).
+For hot reload, file-watcher ingestion, and manual API examples, use the [local development guide](docs/LOCAL_DEV.md). Note that `make dev` begins with a local data reset.
 
----
+## What is implemented
 
-## Ingestion paths
+- CSV and XLSX ingestion by upload, watched directory, or GCS object reference
+- Filesystem or GCS raw storage with SHA-256 addressing
+- Contract parsing, quality checks, deterministic schema drift, and policy enforcement
+- Redis/RQ jobs locally or Cloud Tasks callbacks on Cloud Run
+- Curated Postgres tables, marts, replay, audit events, and per-ingestion lineage
+- A React operations UI and protected administrative endpoints
 
-### 1) Drop files into the incoming folder (watcher → /api/ingest/from_path)
+The GCP lane is an optional deployment reference: Terraform provisions the Cloud Run path, GCS storage, Cloud Tasks, IAM, and supporting services. It requires a GCP project, secrets, and an external Postgres database; this repository does not claim a live public deployment. The BigQuery loader is a placeholder, and the intentionally simple identity model is not a multi-tenant authorization system.
 
-The watcher container polls `/data/incoming` and calls the API. Start it with: `make watch`.
+## Validate a change
 
-> This path uses a privileged endpoint (`/api/ingest/from_path`) and requires internal auth.
-> For local dev, set `TASK_TOKEN` in `.env` (the watcher automatically sends `X-Task-Token`).
-> For Cloud Run, rely on IAM (and optionally a token for defense-in-depth).
-
-- Incoming volume (host): `./data/incoming`
-- Files are copied into the raw landing zone and then **archived** to avoid reprocessing.
-
-### 2) Upload directly to the API (no multipart)
-
-This endpoint accepts `application/octet-stream` and streams the body to disk before registering it.
+Install the locked Python and Node dependencies, then run:
 
 ```bash
-curl -X POST \
-  'http://localhost:8081/api/ingest/upload?dataset=parcels&filename=parcels.xlsx&source=curl' \
-  -H 'Content-Type: application/octet-stream' \
-  --data-binary @./data/samples/parcels_baseline.xlsx
-
-> **Security note:** In production, consider setting `INGEST_AUTH_MODE=token` and a strong
-> `INGEST_TOKEN` for human/admin uploads.
+make lint
+make typecheck
+make test
+make web-check
 ```
 
-> **Cloud Run note:** request bodies have size limits. For larger files, use one of the GCS-backed paths:
->
-> - **Recommended**: mint a **signed URL** (`POST /api/uploads/gcs_signed_url`), `PUT` the file to GCS, then (optionally) let **GCS finalize events** auto-register the ingestion.
-> - **Manual**: upload to GCS yourself (e.g., `gsutil cp`) and call `POST /api/ingest/from_gcs`.
->
-> Example (manual register after `make deploy-gcp`):
->
-> ```bash
-> URL=$(terraform -chdir=infra/gcp/cloud_run_api_demo output -raw service_url)
-> RAW_BUCKET=$(terraform -chdir=infra/gcp/cloud_run_api_demo output -raw raw_bucket)
-> TASK_TOKEN_SECRET=$(terraform -chdir=infra/gcp/cloud_run_api_demo output -raw task_token_secret_name)
-> TASK_TOKEN=$(gcloud secrets versions access latest --secret "$TASK_TOKEN_SECRET")
->
-> gsutil cp ./data/samples/parcels_baseline.xlsx "gs://${RAW_BUCKET}/uploads/parcels_baseline.xlsx"
->
-> curl -sS -X POST "${URL}/api/ingest/from_gcs" \
->   -H "X-Task-Token: ${TASK_TOKEN}" \
->   -H 'Content-Type: application/json' \
->   -d '{"dataset":"parcels","gcs_uri":"gs://'"${RAW_BUCKET}"'/uploads/parcels_baseline.xlsx","source":"gsutil"}' | jq .
-> ```
->
-> For signed URLs + event-driven ingestion wiring, see `docs/DEPLOY_GCP.md`.
-## Cloud Run (production demo)
+CI runs the lint, type-check, and test gates on every pull request and push to `main`.
 
-The Cloud Run lane is optimized for serverless:
+## Read next
 
-- **Raw landing zone**: GCS bucket
-- **Async processing**: Cloud Tasks
-- **Metadata + curated tables**: Postgres (bring your own DB URL)
+- [Architecture](ARCHITECTURE.md) — components, data flow, and boundaries
+- [Quick tour](docs/QUICK_TOUR.md) — guided inspection of the working system
+- [Contracts](docs/CONTRACTS.md) — public interfaces and invariants
+- [Schema drift](docs/SCHEMA_DRIFT.md) — comparison and policy behavior
+- [GCP deployment](docs/DEPLOY_GCP.md) — prerequisites, Terraform, and verification
+- [Runbook](RUNBOOK.md) — routine operations and recovery paths
 
-### Deploy
-
-1) Authenticate and configure gcloud defaults (one-time):
-
-```bash
-make auth
-make init PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
-```
-
-Or, equivalently (manual):
-
-```bash
-gcloud auth login
-gcloud auth application-default login
-gcloud config set project YOUR_PROJECT_ID
-gcloud config set run/region us-central1
-```
-
-2) Provision prerequisite infra (APIs, Artifact Registry, service accounts, **secret containers**):
-
-```bash
-make infra-gcp ENV=dev
-```
-
-3) Add required secret versions (paste values, then Ctrl-D):
-
-```bash
-make db-secret
-make task-token-secret
-
-# Optional (protect public ingest endpoint)
-# make ingest-token-secret
-```
-
-4) Build + deploy:
-
-```bash
-make deploy-gcp ENV=dev
-```
-
-Tip: `make deploy-gcp` runs a secrets preflight (`make check-secrets-gcp`) and fails early if versions are missing.
-
-5) Verify:
-
-```bash
-make verify-gcp ENV=dev
-```
-
----
-
-## Docs
-
-- `docs/QUICK_TOUR.md` — hands-on walkthrough
-- `docs/LOCAL_DEV.md` — local dev workflows (Docker and hybrid)
-- `docs/DEPLOY_GCP.md` — Cloud Run deployment notes + troubleshooting
-- `docs/MAINTENANCE.md` — DB size widgets + pruning retention data
-- `docs/OBSERVABILITY.md` — logs, request IDs, and trace correlation
-- `docs/SCHEMA_DRIFT.md` — dataset schema drift logic and policies
-- `docs/DRIFT_DETECTION.md` — Terraform drift detection notes (infra)
-- `RUNBOOK.md` — common operational tasks
-- `docs/RUNBOOKS/` — incident/debug/release runbooks
-
-## Development notes
-
-- Dataset names are normalized to lowercase and validated (safe for paths + SQL identifiers).
-- Ingestion processing is **idempotent**: only `RECEIVED` and `FAILED_EXCEPTION` ingestions are auto-claimed for processing.
-  - Replays create a **new** ingestion record referencing the same raw artifact.
-- If an ingestion is stuck in `PROCESSING` (e.g., worker crash after claiming), you can reclaim it:
-  - Local/dev: `make reclaim-stuck`
-  - Cloud Run: `POST /internal/admin/reclaim_stuck` (protected via TASK_AUTH_MODE)
+MIT licensed. See [LICENSE](LICENSE).
